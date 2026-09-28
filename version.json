@@ -1,6 +1,6 @@
 {
-  "version": "2.3",
+  "version": "2.4",
   "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/CleanSweep.zip",
-  "sha256": "B05993B5A739AAE2DED9A831B4DAC346F38B90B685109EDADAF1D74A370221F4",
-  "notes": "Automatic update checking (Updates tab). Registry cleaner with restore point, broken shortcut cleaner."
+  "sha256": "5960860BC7222315B68AAC1008A8DCF2B3FF63C15965EB61EB418250E91F221E",
+  "notes": "Fixed missing Scan, Clean and restore point controls. Added a Cancel button to stop scans and cleaning. Layout now adapts to any window size and display scaling."
 }

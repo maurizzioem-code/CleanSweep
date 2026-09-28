@@ -1,6 +1,6 @@
 {
-  "version": "2.4",
+  "version": "2.5",
   "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/CleanSweep.zip",
-  "sha256": "5960860BC7222315B68AAC1008A8DCF2B3FF63C15965EB61EB418250E91F221E",
-  "notes": "Fixed missing Scan, Clean and restore point controls. Added a Cancel button to stop scans and cleaning. Layout now adapts to any window size and display scaling."
+  "sha256": "A5570858343D486FE7624FD37DADB9645D4C2B5820CE1DE410AE12ABFD4AF0CB",
+  "notes": "Added a Create restore point button and an Open System Restore button on the Registry tab."
 }

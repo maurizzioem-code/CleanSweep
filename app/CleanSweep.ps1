@@ -1,7 +1,7 @@
 # CleanSweep - a simple disk, registry and shortcut cleaner for Windows 11
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Windows.Forms.Application]::EnableVisualStyles()
-$Version = "2.4"
+$Version = "2.5"
 # Show any startup error instead of failing silently
 trap { [void][System.Windows.Forms.MessageBox]::Show("CleanSweep hit an error:`n`n$_`n`nLine: $($_.InvocationInfo.ScriptLineNumber)","CleanSweep","OK","Error"); break }
 
@@ -191,14 +191,14 @@ function Backup-Registry($keys) {
 }
 
 # Create a System Restore point. Returns $true only if a new point really exists afterwards.
-function New-RestorePoint {
+function New-RestorePoint([string]$desc = "CleanSweep - before registry cleaning") {
   $srKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore'
   $old = (Get-ItemProperty $srKey -Name SystemRestorePointCreationFrequency -ErrorAction SilentlyContinue).SystemRestorePointCreationFrequency
   $last = (Get-ComputerRestorePoint -ErrorAction SilentlyContinue | Measure-Object SequenceNumber -Maximum).Maximum
   try {
     # Windows normally allows only one restore point per 24 hours; lift that limit just for this call
     Set-ItemProperty $srKey -Name SystemRestorePointCreationFrequency -Value 0 -Type DWord -ErrorAction SilentlyContinue
-    Checkpoint-Computer -Description "CleanSweep - before registry cleaning" -RestorePointType MODIFY_SETTINGS -ErrorAction Stop -WarningAction SilentlyContinue
+    Checkpoint-Computer -Description $desc -RestorePointType MODIFY_SETTINGS -ErrorAction Stop -WarningAction SilentlyContinue
   } catch { } finally {
     if ($null -eq $old) { Remove-ItemProperty $srKey -Name SystemRestorePointCreationFrequency -ErrorAction SilentlyContinue }
     else { Set-ItemProperty $srKey -Name SystemRestorePointCreationFrequency -Value $old -Type DWord -ErrorAction SilentlyContinue }
@@ -210,8 +210,33 @@ function New-RestorePoint {
 $reg = New-Tab "Registry" @(@("Issue",260), @("Registry location",330), @("Missing file",300)) "Click Scan to find invalid registry entries."
 $restore = New-Object Windows.Forms.Button -Property @{Text="Restore a backup..."; AutoSize=$true; MinimumSize='150,36'; Margin='0,0,8,0'}
 $reg.Bar.Controls.Add($restore)
+$mkRp  = New-Object Windows.Forms.Button -Property @{Text="Create restore point"; AutoSize=$true; MinimumSize='170,36'; Margin='0,0,8,0'}
+$openRp = New-Object Windows.Forms.Button -Property @{Text="Open System Restore"; AutoSize=$true; MinimumSize='170,36'; Margin='0,0,8,0'}
+$reg.Extra.Controls.AddRange(@($mkRp, $openRp))
+$mkRp.Add_Click({
+  $form.Cursor='WaitCursor'; $mkRp.Enabled = $false; $reg.Scan.Enabled = $false; $reg.Clean.Enabled = $false
+  $reg.Status.Text = "Creating a restore point (this can take a minute)..."; $form.Refresh()
+  $ok = New-RestorePoint "CleanSweep - manual restore point"
+  if (-not $ok) {
+    $form.Cursor='Default'
+    if ([Windows.Forms.MessageBox]::Show("Could not create a restore point. System Protection may be turned off for drive $env:SystemDrive.`n`nTurn on System Protection and try again?","Restore point","YesNo","Question") -eq "Yes") {
+      $form.Cursor='WaitCursor'; $reg.Status.Text = "Turning on System Protection and creating a restore point..."; $form.Refresh()
+      try { Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction Stop } catch {}
+      $ok = New-RestorePoint "CleanSweep - manual restore point"
+    }
+  }
+  $form.Cursor='Default'; $mkRp.Enabled = $true; $reg.Scan.Enabled = $true; $reg.Clean.Enabled = ($reg.List.Items.Count -gt 0)
+  if ($ok) {
+    $reg.Status.Text = "Restore point created."
+    [void][Windows.Forms.MessageBox]::Show("A System Restore point named 'CleanSweep - manual restore point' was created on " + (Get-Date).ToString("MMM d, yyyy h:mm tt") + ".`n`nTo use it later, click 'Open System Restore'.","CleanSweep","OK","Information")
+  } else {
+    $reg.Status.Text = "No restore point was created."
+    [void][Windows.Forms.MessageBox]::Show("Windows could not create a restore point.","CleanSweep","OK","Warning")
+  }
+})
+$openRp.Add_Click({ Start-Process "$env:SystemRoot\System32\rstrui.exe" })
 $rpBox = New-Object Windows.Forms.CheckBox -Property @{Text="Create a System Restore point before cleaning (recommended)"; AutoSize=$true; Checked=$true}
-$reg.Extra.Controls.Add($rpBox)
+$reg.Extra.Controls.Add($rpBox); $reg.Extra.Controls.SetChildIndex($rpBox, 0); $reg.Extra.SetFlowBreak($rpBox, $true)  # checkbox on its own line, buttons below
 
 $reg.Scan.Add_Click({
   Set-Busy $reg $true; $reg.List.Items.Clear(); $reg.Status.Text = "Scanning the registry..."

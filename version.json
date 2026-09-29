@@ -1,6 +1,6 @@
 {
-  "version": "2.5",
+  "version": "2.6",
   "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/CleanSweep.zip",
-  "sha256": "A5570858343D486FE7624FD37DADB9645D4C2B5820CE1DE410AE12ABFD4AF0CB",
-  "notes": "Added a Create restore point button and an Open System Restore button on the Registry tab."
+  "sha256": "9765003328DF0910E930412C66BE3C03AD4BA11B632C9856CA99627753D0392B",
+  "notes": "New Wi-Fi Optimizer tab: connection test (ping, jitter, packet loss, DNS speed), one-click fixes (DNS/ARP flush, IP renew, Wi-Fi power max performance, TCP tuning, optional network reset), faster DNS choice, and a nearby networks channel check."
 }

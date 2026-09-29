@@ -1,7 +1,7 @@
 # CleanSweep - a simple disk, registry and shortcut cleaner for Windows 11
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Windows.Forms.Application]::EnableVisualStyles()
-$Version = "2.5"
+$Version = "2.6"
 # Show any startup error instead of failing silently
 trap { [void][System.Windows.Forms.MessageBox]::Show("CleanSweep hit an error:`n`n$_`n`nLine: $($_.InvocationInfo.ScriptLineNumber)","CleanSweep","OK","Error"); break }
 
@@ -26,7 +26,7 @@ function Test-Missing([string]$p) {
   return -not (Test-Path -LiteralPath $p)
 }
 
-$form = New-Object Windows.Forms.Form -Property @{Text="CleanSweep $Version - Junk, Registry and Shortcut Cleaner"; Size='820,620'; StartPosition='CenterScreen'; Font=New-Object Drawing.Font("Segoe UI",10); MinimumSize='700,500'}
+$form = New-Object Windows.Forms.Form -Property @{Text="CleanSweep $Version - PC Cleaner and Wi-Fi Optimizer"; Size='820,620'; StartPosition='CenterScreen'; Font=New-Object Drawing.Font("Segoe UI",10); MinimumSize='700,500'}
 $ico = Join-Path $PSScriptRoot "CleanSweep.ico"; if (Test-Path $ico) { $form.Icon = New-Object Drawing.Icon($ico) }
 $tabs = New-Object Windows.Forms.TabControl -Property @{Dock='Fill'}
 $form.Controls.Add($tabs)
@@ -332,7 +332,157 @@ $sc.Clean.Add_Click({
   $sc.Status.Text = "Moved $ok broken shortcuts to the Recycle Bin."; $sc.Clean.Enabled = ($sc.List.Items.Count -gt 0); $form.Cursor='Default'
 })
 
-# ================================================================ 4. UPDATES
+# ================================================================ 4. WI-FI OPTIMIZER
+function Get-WifiAdapter {
+  Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.NdisPhysicalMedium -eq 9 -or $_.InterfaceDescription -match 'Wi-?Fi|Wireless|802\.11|WLAN' } |
+    Sort-Object @{e={$_.Status -eq 'Up'}; Descending=$true} | Select-Object -First 1
+}
+# Reads "Name : Value" lines from netsh wlan show interfaces
+$LocationHelp = "Windows needs Location turned on to show Wi-Fi details.`nOpen Settings > Privacy & security > Location, turn on Location services and 'Let desktop apps access your location'."
+function Get-WifiInfo {
+  $info = @{}
+  $out = netsh wlan show interfaces 2>$null
+  if (($out -join " ") -match 'location permission|location services') { $info['_NeedsLocation'] = $true }
+  foreach ($line in $out) {
+    if ($line -match '^\s*([^:]+?)\s*:\s*(.+)$') { $k = $matches[1].Trim(); if (-not $info.ContainsKey($k)) { $info[$k] = $matches[2].Trim() } }
+  }
+  $info
+}
+function Update-WifiInfo {
+  $a = Get-WifiAdapter
+  if (-not $a) { $wifiInfo.Text = "No Wi-Fi adapter was found on this PC."; return }
+  $i = Get-WifiInfo
+  if ($i['_NeedsLocation']) { $wifiInfo.Text = $LocationHelp; return }
+  $dns = (Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses -join ", "
+  if ($a.Status -ne 'Up' -or -not $i['SSID']) { $wifiInfo.Text = "Wi-Fi adapter: $($a.InterfaceDescription)`nNot connected to a Wi-Fi network."; return }
+  $sig = $i['Signal']; $pct = 0; [void][int]::TryParse(($sig -replace '[^\d]'), [ref]$pct)
+  $quality = if ($pct -ge 80) { "Excellent" } elseif ($pct -ge 60) { "Good" } elseif ($pct -ge 40) { "Fair - moving closer to the router will help" } else { "Weak - move closer to the router" }
+  $band = if ($i['Band']) { $i['Band'] } else { "-" }
+  $wifiInfo.Text = "Network: $($i['SSID'])     Signal: $sig ($quality)`n" +
+    "Band: $band     Channel: $($i['Channel'])     Type: $($i['Radio type'])`n" +
+    "Speed: $($i['Receive rate (Mbps)']) Mbps down / $($i['Transmit rate (Mbps)']) Mbps up (link speed)     DNS: $dns"
+}
+# Latency, jitter, packet loss and DNS lookup time
+function Test-Net {
+  $times = @(); $lost = 0
+  foreach ($n in 1..10) {
+    Check-Cancel
+    $r = Test-Connection -ComputerName 1.1.1.1 -Count 1 -ErrorAction SilentlyContinue
+    if ($r) { $times += [int]$r.ResponseTime } else { $lost++ }
+  }
+  $dnsMs = $null
+  try { Clear-DnsClientCache; $dnsMs = [int](Measure-Command { Resolve-DnsName ("www.microsoft.com") -DnsOnly -ErrorAction Stop | Out-Null }).TotalMilliseconds } catch {}
+  $avg = if ($times) { [int](($times | Measure-Object -Average).Average) } else { $null }
+  $jit = if ($times.Count -gt 1) { [int](((1..($times.Count-1)) | ForEach-Object { [math]::Abs($times[$_] - $times[$_-1]) } | Measure-Object -Average).Average) } else { 0 }
+  [pscustomobject]@{ Ping=$avg; Jitter=$jit; Loss=[int]($lost*10); Dns=$dnsMs }
+}
+function Fmt-Net($t) {
+  if ($null -eq $t.Ping) { return "No internet response (100% packet loss)." }
+  "Ping $($t.Ping) ms, jitter $($t.Jitter) ms, packet loss $($t.Loss)%, DNS lookup " + $(if ($null -ne $t.Dns) { "$($t.Dns) ms" } else { "failed" })
+}
+
+$wifi = New-Tab "Wi-Fi Optimizer" @(@("Optimization",300), @("What it does",560)) "Click Test connection to measure your Wi-Fi, then Optimize."
+$wifi.Scan.Text = "Test connection"; $wifi.Clean.Text = "Optimize"; $wifi.Clean.Enabled = $true
+$wifiInfo = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=70; Padding='0,4,0,4'; Text="Reading Wi-Fi details..."}
+$wifi.Page.Controls.Add($wifiInfo); $wifi.Page.Controls.SetChildIndex($wifiInfo, 3)   # title, then Wi-Fi details, then list
+
+$dnsLabel = New-Object Windows.Forms.Label -Property @{Text="DNS server:"; AutoSize=$true; Margin='8,9,4,0'}
+$dnsBox = New-Object Windows.Forms.ComboBox -Property @{DropDownStyle='DropDownList'; Width=230; Margin='0,5,8,0'}
+[void]$dnsBox.Items.AddRange(@("Keep current", "Cloudflare (1.1.1.1) - fastest", "Google (8.8.8.8)", "Automatic (from router)"))
+$dnsBox.SelectedIndex = 0
+$nearBtn = New-Object Windows.Forms.Button -Property @{Text="Nearby networks"; AutoSize=$true; MinimumSize='150,36'; Margin='0,0,8,0'}
+$wifi.Extra.Controls.AddRange(@($dnsLabel, $dnsBox, $nearBtn))
+
+$wifiOpts = [ordered]@{
+  "Flush DNS cache"                 = @("Clears stored website addresses so stale entries can't slow or break loading.", $true)
+  "Clear ARP cache"                 = @("Clears the local device address table, which fixes some router connection glitches.", $true)
+  "Renew IP address"                = @("Asks your router for a fresh IP address. Wi-Fi drops for a few seconds.", $true)
+  "Wi-Fi power: max performance"    = @("Stops Windows throttling the Wi-Fi card to save power when plugged in (light saving on battery).", $true)
+  "Reset TCP auto-tuning to normal" = @("Restores Windows' default download window scaling if another tool changed it.", $true)
+  "Reset network stack (Winsock/IP)" = @("Deep repair for broken connections. Needs a restart. Only use if Wi-Fi is misbehaving.", $false)
+}
+foreach ($k in $wifiOpts.Keys) { $i = $wifi.List.Items.Add($k); [void]$i.SubItems.Add($wifiOpts[$k][0]); $i.Checked = $wifiOpts[$k][1] }
+$script:NetBefore = $null
+
+$wifi.Scan.Add_Click({
+  Set-Busy $wifi $true; Update-WifiInfo
+  try { $wifi.Status.Text = "Testing connection (about 10 seconds)..."; $t = Test-Net; $script:NetBefore = $t; $wifi.Status.Text = Fmt-Net $t }
+  catch { $wifi.Status.Text = "Test cancelled." }
+  Set-Busy $wifi $false; $wifi.Clean.Enabled = $true
+})
+
+$wifi.Clean.Add_Click({
+  $sel = @($wifi.List.Items | Where-Object Checked | ForEach-Object Text)
+  if (-not $sel -and $dnsBox.SelectedIndex -eq 0) { return }
+  $a = Get-WifiAdapter
+  if (-not $a) { [void][Windows.Forms.MessageBox]::Show("No Wi-Fi adapter was found.","CleanSweep","OK","Warning"); return }
+  if ([Windows.Forms.MessageBox]::Show("Apply the selected Wi-Fi optimizations?`n`nYour Wi-Fi may disconnect for a few seconds.","Confirm","YesNo","Question") -ne "Yes") { return }
+  Set-Busy $wifi $true; $script:restart = $false
+  function Step($name, [scriptblock]$action) { $wifi.Status.Text = "$name..."; [Windows.Forms.Application]::DoEvents(); try { & $action; $script:done += $name } catch {} }
+  $script:done = @()
+  if ($sel -contains "Flush DNS cache") { Step "Flushing DNS cache" { ipconfig /flushdns | Out-Null; Clear-DnsClientCache } }
+  if ($sel -contains "Clear ARP cache") { Step "Clearing ARP cache" { netsh interface ip delete arpcache | Out-Null } }
+  if ($sel -contains "Wi-Fi power: max performance") { Step "Setting Wi-Fi power to max performance" {
+      $sub = "19cbb8fa-5279-450e-9fac-8a3d5fedd0c1"; $set = "12bbebe6-58d6-4636-95bb-3217ef867c1a"
+      powercfg /setacvalueindex SCHEME_CURRENT $sub $set 0 | Out-Null   # plugged in: Maximum Performance
+      powercfg /setdcvalueindex SCHEME_CURRENT $sub $set 1 | Out-Null   # battery: Low Power Saving
+      powercfg /setactive SCHEME_CURRENT | Out-Null } }
+  if ($sel -contains "Reset TCP auto-tuning to normal") { Step "Resetting TCP auto-tuning" { netsh int tcp set global autotuninglevel=normal | Out-Null } }
+  switch ($dnsBox.SelectedIndex) {
+    1 { Step "Switching DNS to Cloudflare" { Set-DnsClientServerAddress -InterfaceIndex $a.ifIndex -ServerAddresses ("1.1.1.1","1.0.0.1") -ErrorAction Stop } }
+    2 { Step "Switching DNS to Google" { Set-DnsClientServerAddress -InterfaceIndex $a.ifIndex -ServerAddresses ("8.8.8.8","8.8.4.4") -ErrorAction Stop } }
+    3 { Step "Switching DNS to automatic" { Set-DnsClientServerAddress -InterfaceIndex $a.ifIndex -ResetServerAddresses -ErrorAction Stop } }
+  }
+  if ($sel -contains "Renew IP address") { Step "Renewing IP address" {
+      ipconfig /release "$($a.Name)" | Out-Null; Start-Sleep 1; ipconfig /renew "$($a.Name)" | Out-Null } }
+  if ($sel -contains "Reset network stack (Winsock/IP)") { Step "Resetting network stack" { netsh winsock reset | Out-Null; netsh int ip reset | Out-Null; $script:restart = $true } }
+
+  # Wait for Wi-Fi to reconnect, then measure again
+  $wifi.Status.Text = "Waiting for Wi-Fi to reconnect..."
+  foreach ($n in 1..20) { [Windows.Forms.Application]::DoEvents(); if (Test-Connection 1.1.1.1 -Count 1 -Quiet -ErrorAction SilentlyContinue) { break }; Start-Sleep -Milliseconds 700 }
+  Update-WifiInfo
+  $msg = "Applied:`n - " + ($script:done -join "`n - ")
+  try {
+    $wifi.Status.Text = "Testing connection again..."; $after = Test-Net; $wifi.Status.Text = "After: " + (Fmt-Net $after)
+    if ($script:NetBefore) { $msg += "`n`nBefore: " + (Fmt-Net $script:NetBefore) }
+    $msg += "`nAfter:  " + (Fmt-Net $after); $script:NetBefore = $after
+  } catch { $wifi.Status.Text = "Optimizations applied." }
+  if ($script:restart) { $msg += "`n`nRestart your PC to finish the network stack reset." }
+  Set-Busy $wifi $false; $wifi.Clean.Enabled = $true
+  [void][Windows.Forms.MessageBox]::Show($msg,"Wi-Fi Optimizer","OK","Information")
+})
+
+# Nearby networks: shows which channels are crowded
+$nearBtn.Add_Click({
+  $form.Cursor = 'WaitCursor'
+  $nets = @(); $ssid = ""; $cur = $null
+  $out = netsh wlan show networks mode=bssid 2>$null
+  if (($out -join " ") -match 'location permission|location services') { $form.Cursor = 'Default'; [void][Windows.Forms.MessageBox]::Show($LocationHelp,"Nearby networks","OK","Information"); return }
+  foreach ($line in $out) {
+    if ($line -match '^SSID \d+ : (.*)$') { $ssid = $matches[1].Trim(); if (-not $ssid) { $ssid = "(hidden)" } }
+    elseif ($line -match '^\s+BSSID \d+') { $cur = [ordered]@{ SSID=$ssid; Signal=""; Channel=""; Band="" }; $nets += $cur }
+    elseif ($cur -and $line -match '^\s+Signal\s*:\s*(.+)$') { $cur.Signal = $matches[1].Trim() }
+    elseif ($cur -and $line -match '^\s+Channel\s*:\s*(\d+)') { $cur.Channel = [int]$matches[1] }
+    elseif ($cur -and $line -match '^\s+Band\s*:\s*(.+)$') { $cur.Band = $matches[1].Trim() }
+  }
+  $form.Cursor = 'Default'
+  $dlg = New-Object Windows.Forms.Form -Property @{Text="Nearby Wi-Fi networks"; Size='720,480'; StartPosition='CenterParent'; Font=$form.Font; Icon=$form.Icon}
+  $lv = New-Object Windows.Forms.ListView -Property @{View='Details'; FullRowSelect=$true; Dock='Fill'}
+  foreach ($c in @(@("Network",260),@("Signal",80),@("Channel",80),@("Band",100),@("Networks on this channel",170))) { [void]$lv.Columns.Add($c[0],$c[1]) }
+  $counts = $nets | Group-Object Channel -AsHashTable -AsString
+  foreach ($n in ($nets | Sort-Object { [int]($_.Signal -replace '[^\d]') } -Descending)) {
+    $it = $lv.Items.Add($n.SSID); foreach ($v in $n.Signal, "$($n.Channel)", $n.Band, "$(@($counts["$($n.Channel)"]).Count)") { [void]$it.SubItems.Add($v) } }
+  $cur = (Get-WifiInfo)['Channel']
+  $tip = if (-not $nets) { "No networks found. Make sure Wi-Fi is turned on." }
+    elseif ($cur -and $counts[$cur] -and @($counts[$cur]).Count -ge 4) { "Your channel ($cur) is crowded with $(@($counts[$cur]).Count) networks. If your router supports 5 GHz, connect to that network, or change the router's channel in its settings." }
+    elseif ($cur) { "Your channel ($cur) is not heavily crowded." } else { "" }
+  $tipL = New-Object Windows.Forms.Label -Property @{Dock='Bottom'; Height=56; Padding='8,6,8,6'; Text=$tip}
+  $dlg.Controls.Add($lv); $dlg.Controls.Add($tipL)
+  [void]$dlg.ShowDialog($form)
+})
+$tabs.Add_SelectedIndexChanged({ if ($tabs.SelectedTab -eq $wifi.Page) { Update-WifiInfo } })
+
+# ================================================================ 5. UPDATES
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $AppDir = Join-Path $env:LOCALAPPDATA "CleanSweep"
 $settingsFile = Join-Path $AppDir "settings.json"

@@ -1,6 +1,6 @@
 # CleanSweep
 
-A simple junk file, registry and broken shortcut cleaner for Windows 11.
+A simple junk file, registry and broken shortcut cleaner with a Wi-Fi optimizer for Windows 11.
 
 ## Install
 1. Download [CleanSweep.zip](https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/CleanSweep.zip) and extract it.

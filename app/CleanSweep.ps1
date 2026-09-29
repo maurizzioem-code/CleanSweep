@@ -1,7 +1,7 @@
 # CleanSweep - a simple disk, registry and shortcut cleaner for Windows 11
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Windows.Forms.Application]::EnableVisualStyles()
-$Version = "2.6"
+$Version = "2.7"
 # Show any startup error instead of failing silently
 trap { [void][System.Windows.Forms.MessageBox]::Show("CleanSweep hit an error:`n`n$_`n`nLine: $($_.InvocationInfo.ScriptLineNumber)","CleanSweep","OK","Error"); break }
 
@@ -26,7 +26,7 @@ function Test-Missing([string]$p) {
   return -not (Test-Path -LiteralPath $p)
 }
 
-$form = New-Object Windows.Forms.Form -Property @{Text="CleanSweep $Version - PC Cleaner and Wi-Fi Optimizer"; Size='820,620'; StartPosition='CenterScreen'; Font=New-Object Drawing.Font("Segoe UI",10); MinimumSize='700,500'}
+$form = New-Object Windows.Forms.Form -Property @{Text="CleanSweep $Version - PC Cleaner and Network Optimizer"; Size='820,620'; StartPosition='CenterScreen'; Font=New-Object Drawing.Font("Segoe UI",10); MinimumSize='700,500'}
 $ico = Join-Path $PSScriptRoot "CleanSweep.ico"; if (Test-Path $ico) { $form.Icon = New-Object Drawing.Icon($ico) }
 $tabs = New-Object Windows.Forms.TabControl -Property @{Dock='Fill'}
 $form.Controls.Add($tabs)
@@ -332,7 +332,15 @@ $sc.Clean.Add_Click({
   $sc.Status.Text = "Moved $ok broken shortcuts to the Recycle Bin."; $sc.Clean.Enabled = ($sc.List.Items.Count -gt 0); $form.Cursor='Default'
 })
 
-# ================================================================ 4. WI-FI OPTIMIZER
+# ================================================================ 4. NETWORK OPTIMIZER (Wi-Fi and Ethernet)
+$script:NetKind = "Wi-Fi"
+function Get-EthAdapter {
+  Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
+    Where-Object { $_.NdisPhysicalMedium -eq 14 -and $_.InterfaceDescription -notmatch 'Wi-?Fi|Wireless|802\.11|WLAN|Bluetooth|Virtual|VPN|TAP' } |
+    Sort-Object @{e={$_.Status -eq 'Up'}; Descending=$true} | Select-Object -First 1
+}
+# The adapter chosen in the Connection box
+function Get-NetTarget { if ($script:NetKind -eq "Ethernet") { Get-EthAdapter } else { Get-WifiAdapter } }
 function Get-WifiAdapter {
   Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.NdisPhysicalMedium -eq 9 -or $_.InterfaceDescription -match 'Wi-?Fi|Wireless|802\.11|WLAN' } |
     Sort-Object @{e={$_.Status -eq 'Up'}; Descending=$true} | Select-Object -First 1
@@ -349,7 +357,19 @@ function Get-WifiInfo {
   $info
 }
 function Update-WifiInfo {
-  $a = Get-WifiAdapter
+  $a = Get-NetTarget
+  if ($script:NetKind -eq "Ethernet") {
+    if (-not $a) { $wifiInfo.Text = "No Ethernet port was found on this PC."; return }
+    if ($a.Status -ne 'Up') { $wifiInfo.Text = "Ethernet adapter: $($a.InterfaceDescription)`nNo cable connected (or the cable/router port isn't working)."; return }
+    $dns = (Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses -join ", "
+    $bps = [double]$a.ReceiveLinkSpeed; $mbps = [int]($bps / 1e6)
+    $hint = if ($mbps -gt 0 -and $mbps -le 100) { "  - Only 100 Mbps: the cable or router port may be limiting you. Try a Cat5e/Cat6 cable or another port." } else { "" }
+    $duplex = if ($a.FullDuplex) { "Full duplex" } else { "Half duplex (slow - check the cable)" }
+    $wifiInfo.Text = "Ethernet adapter: $($a.InterfaceDescription)`n" +
+      "Link speed: $($a.LinkSpeed)     $duplex$hint`n" +
+      "Adapter name: $($a.Name)     DNS: $dns"
+    return
+  }
   if (-not $a) { $wifiInfo.Text = "No Wi-Fi adapter was found on this PC."; return }
   $i = Get-WifiInfo
   if ($i['_NeedsLocation']) { $wifiInfo.Text = $LocationHelp; return }
@@ -381,7 +401,7 @@ function Fmt-Net($t) {
   "Ping $($t.Ping) ms, jitter $($t.Jitter) ms, packet loss $($t.Loss)%, DNS lookup " + $(if ($null -ne $t.Dns) { "$($t.Dns) ms" } else { "failed" })
 }
 
-$wifi = New-Tab "Wi-Fi Optimizer" @(@("Optimization",300), @("What it does",560)) "Click Test connection to measure your Wi-Fi, then Optimize."
+$wifi = New-Tab "Network Optimizer" @(@("Optimization",300), @("What it does",560)) "Click Test connection to measure your connection, then Optimize."
 $wifi.Scan.Text = "Test connection"; $wifi.Clean.Text = "Optimize"; $wifi.Clean.Enabled = $true
 $wifiInfo = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=70; Padding='0,4,0,4'; Text="Reading Wi-Fi details..."}
 $wifi.Page.Controls.Add($wifiInfo); $wifi.Page.Controls.SetChildIndex($wifiInfo, 3)   # title, then Wi-Fi details, then list
@@ -391,17 +411,43 @@ $dnsBox = New-Object Windows.Forms.ComboBox -Property @{DropDownStyle='DropDownL
 [void]$dnsBox.Items.AddRange(@("Keep current", "Cloudflare (1.1.1.1) - fastest", "Google (8.8.8.8)", "Automatic (from router)"))
 $dnsBox.SelectedIndex = 0
 $nearBtn = New-Object Windows.Forms.Button -Property @{Text="Nearby networks"; AutoSize=$true; MinimumSize='150,36'; Margin='0,0,8,0'}
-$wifi.Extra.Controls.AddRange(@($dnsLabel, $dnsBox, $nearBtn))
+$connLabel = New-Object Windows.Forms.Label -Property @{Text="Connection:"; AutoSize=$true; Margin='0,9,4,0'}
+$connBox = New-Object Windows.Forms.ComboBox -Property @{DropDownStyle='DropDownList'; Width=120; Margin='0,5,8,0'}
+[void]$connBox.Items.AddRange(@("Wi-Fi", "Ethernet"))
+$wifi.Extra.Controls.AddRange(@($connLabel, $connBox, $dnsLabel, $dnsBox, $nearBtn))
+# Start on whichever connection Windows is actually using for the internet
+try {
+  $route = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction Stop | Sort-Object { $_.RouteMetric + (Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).InterfaceMetric } | Select-Object -First 1
+  $eth = Get-EthAdapter
+  if ($route -and $eth -and $route.ifIndex -eq $eth.ifIndex) { $script:NetKind = "Ethernet" }
+} catch {}
+$connBox.SelectedItem = $script:NetKind
+$connBox.Add_SelectedIndexChanged({
+  $script:NetKind = $connBox.SelectedItem; $script:NetBefore = $null
+Load-NetOpts
+  $nearBtn.Enabled = ($script:NetKind -eq "Wi-Fi")
+  $wifi.Status.Text = "Click Test connection to measure your $($script:NetKind), then Optimize."
+  Load-NetOpts; Update-WifiInfo
+})
+$nearBtn.Enabled = ($script:NetKind -eq "Wi-Fi")
 
-$wifiOpts = [ordered]@{
+$commonOpts = [ordered]@{
   "Flush DNS cache"                 = @("Clears stored website addresses so stale entries can't slow or break loading.", $true)
   "Clear ARP cache"                 = @("Clears the local device address table, which fixes some router connection glitches.", $true)
-  "Renew IP address"                = @("Asks your router for a fresh IP address. Wi-Fi drops for a few seconds.", $true)
-  "Wi-Fi power: max performance"    = @("Stops Windows throttling the Wi-Fi card to save power when plugged in (light saving on battery).", $true)
-  "Reset TCP auto-tuning to normal" = @("Restores Windows' default download window scaling if another tool changed it.", $true)
-  "Reset network stack (Winsock/IP)" = @("Deep repair for broken connections. Needs a restart. Only use if Wi-Fi is misbehaving.", $false)
+  "Renew IP address"                = @("Asks your router for a fresh IP address. The connection drops for a few seconds.", $true)
 }
-foreach ($k in $wifiOpts.Keys) { $i = $wifi.List.Items.Add($k); [void]$i.SubItems.Add($wifiOpts[$k][0]); $i.Checked = $wifiOpts[$k][1] }
+$wifiOnly = [ordered]@{ "Wi-Fi power: max performance" = @("Stops Windows throttling the Wi-Fi card to save power when plugged in (light saving on battery).", $true) }
+$ethOnly  = [ordered]@{ "Ethernet power saving off" = @("Turns off Energy Efficient / Green Ethernet, which can add lag. The cable reconnects briefly.", $true) }
+$tailOpts = [ordered]@{
+  "Reset TCP auto-tuning to normal"  = @("Restores Windows' default download window scaling if another tool changed it.", $true)
+  "Reset network stack (Winsock/IP)" = @("Deep repair for broken connections. Needs a restart. Only use if your internet is misbehaving.", $false)
+}
+function Load-NetOpts {
+  $wifi.List.BeginUpdate(); $wifi.List.Items.Clear()
+  $extra = if ($script:NetKind -eq "Ethernet") { $ethOnly } else { $wifiOnly }
+  foreach ($set in $commonOpts, $extra, $tailOpts) { foreach ($k in $set.Keys) { $i = $wifi.List.Items.Add($k); [void]$i.SubItems.Add($set[$k][0]); $i.Checked = $set[$k][1] } }
+  $wifi.List.EndUpdate()
+}
 $script:NetBefore = $null
 
 $wifi.Scan.Add_Click({
@@ -414,10 +460,10 @@ $wifi.Scan.Add_Click({
 $wifi.Clean.Add_Click({
   $sel = @($wifi.List.Items | Where-Object Checked | ForEach-Object Text)
   if (-not $sel -and $dnsBox.SelectedIndex -eq 0) { return }
-  $a = Get-WifiAdapter
-  if (-not $a) { [void][Windows.Forms.MessageBox]::Show("No Wi-Fi adapter was found.","CleanSweep","OK","Warning"); return }
-  if ([Windows.Forms.MessageBox]::Show("Apply the selected Wi-Fi optimizations?`n`nYour Wi-Fi may disconnect for a few seconds.","Confirm","YesNo","Question") -ne "Yes") { return }
-  Set-Busy $wifi $true; $script:restart = $false
+  $a = Get-NetTarget
+  if (-not $a) { [void][Windows.Forms.MessageBox]::Show("No $($script:NetKind) adapter was found.","CleanSweep","OK","Warning"); return }
+  if ([Windows.Forms.MessageBox]::Show("Apply the selected $($script:NetKind) optimizations?`n`nYour connection may drop for a few seconds.","Confirm","YesNo","Question") -ne "Yes") { return }
+  Set-Busy $wifi $true; $script:restart = $false; $script:ethChanged = $false
   function Step($name, [scriptblock]$action) { $wifi.Status.Text = "$name..."; [Windows.Forms.Application]::DoEvents(); try { & $action; $script:done += $name } catch {} }
   $script:done = @()
   if ($sel -contains "Flush DNS cache") { Step "Flushing DNS cache" { ipconfig /flushdns | Out-Null; Clear-DnsClientCache } }
@@ -427,6 +473,16 @@ $wifi.Clean.Add_Click({
       powercfg /setacvalueindex SCHEME_CURRENT $sub $set 0 | Out-Null   # plugged in: Maximum Performance
       powercfg /setdcvalueindex SCHEME_CURRENT $sub $set 1 | Out-Null   # battery: Low Power Saving
       powercfg /setactive SCHEME_CURRENT | Out-Null } }
+  if ($sel -contains "Ethernet power saving off") { Step "Turning off Ethernet power saving" {
+      # Driver setting names differ between Intel, Realtek, Killer etc., so match the common ones
+      Get-NetAdapterAdvancedProperty -Name $a.Name -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -match 'Energy.?Efficient|Green Ethernet|Power Saving Mode|Advanced EEE|Gigabit Lite|Ultra Low Power|System Idle Power Saver' } |
+        ForEach-Object {
+          $off = $_.ValidDisplayValues | Where-Object { $_ -match '^(Disabled|Off)$' } | Select-Object -First 1
+          if ($off -and $_.DisplayValue -ne $off) { Set-NetAdapterAdvancedProperty -Name $a.Name -DisplayName $_.DisplayName -DisplayValue $off -NoRestart -ErrorAction SilentlyContinue; $script:ethChanged = $true }
+        }
+      if ($script:ethChanged) { Restart-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction SilentlyContinue }
+    } }
   if ($sel -contains "Reset TCP auto-tuning to normal") { Step "Resetting TCP auto-tuning" { netsh int tcp set global autotuninglevel=normal | Out-Null } }
   switch ($dnsBox.SelectedIndex) {
     1 { Step "Switching DNS to Cloudflare" { Set-DnsClientServerAddress -InterfaceIndex $a.ifIndex -ServerAddresses ("1.1.1.1","1.0.0.1") -ErrorAction Stop } }
@@ -438,7 +494,7 @@ $wifi.Clean.Add_Click({
   if ($sel -contains "Reset network stack (Winsock/IP)") { Step "Resetting network stack" { netsh winsock reset | Out-Null; netsh int ip reset | Out-Null; $script:restart = $true } }
 
   # Wait for Wi-Fi to reconnect, then measure again
-  $wifi.Status.Text = "Waiting for Wi-Fi to reconnect..."
+  $wifi.Status.Text = "Waiting for $($script:NetKind) to reconnect..."
   foreach ($n in 1..20) { [Windows.Forms.Application]::DoEvents(); if (Test-Connection 1.1.1.1 -Count 1 -Quiet -ErrorAction SilentlyContinue) { break }; Start-Sleep -Milliseconds 700 }
   Update-WifiInfo
   $msg = "Applied:`n - " + ($script:done -join "`n - ")
@@ -449,7 +505,7 @@ $wifi.Clean.Add_Click({
   } catch { $wifi.Status.Text = "Optimizations applied." }
   if ($script:restart) { $msg += "`n`nRestart your PC to finish the network stack reset." }
   Set-Busy $wifi $false; $wifi.Clean.Enabled = $true
-  [void][Windows.Forms.MessageBox]::Show($msg,"Wi-Fi Optimizer","OK","Information")
+  [void][Windows.Forms.MessageBox]::Show($msg,"Network Optimizer","OK","Information")
 })
 
 # Nearby networks: shows which channels are crowded

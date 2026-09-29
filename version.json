@@ -1,6 +1,6 @@
 {
-  "version": "2.6",
+  "version": "2.7",
   "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/CleanSweep.zip",
-  "sha256": "9765003328DF0910E930412C66BE3C03AD4BA11B632C9856CA99627753D0392B",
-  "notes": "New Wi-Fi Optimizer tab: connection test (ping, jitter, packet loss, DNS speed), one-click fixes (DNS/ARP flush, IP renew, Wi-Fi power max performance, TCP tuning, optional network reset), faster DNS choice, and a nearby networks channel check."
+  "sha256": "7B669DC7DB3A6D49D7D924FC6CE7CE0B30624B7A09B8035495F33CE92863965A",
+  "notes": "Network Optimizer now supports Ethernet too: choose Wi-Fi or Ethernet, see link speed and cable warnings, and turn off Energy Efficient/Green Ethernet power saving."
 }

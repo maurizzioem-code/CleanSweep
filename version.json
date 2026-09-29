@@ -1,6 +1,6 @@
 {
   "version": "2.7",
-  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/CleanSweep.zip",
-  "sha256": "7B669DC7DB3A6D49D7D924FC6CE7CE0B30624B7A09B8035495F33CE92863965A",
+  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-2.7.zip",
+  "sha256": "D8CD3044506106CB4F29E272AA5D31DC6856670C823617235AA463AEF6670BE4",
   "notes": "Network Optimizer now supports Ethernet too: choose Wi-Fi or Ethernet, see link speed and cable warnings, and turn off Energy Efficient/Green Ethernet power saving."
 }

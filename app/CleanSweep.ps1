@@ -735,8 +735,10 @@ function Invoke-EthDiagnostics {
   # 5. IP configuration
   Progress "IP address"
   $ip = Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction Ignore | Select-Object -First 1
-  $cfg = Get-NetIPConfiguration -InterfaceIndex $a.ifIndex -ErrorAction Ignore
-  $gw = $cfg.IPv4DefaultGateway.NextHop | Select-Object -First 1
+  # Router address from the routing table (Get-NetIPConfiguration can throw on some adapters)
+  $gw = $null
+  try { $gw = (Get-NetRoute -InterfaceIndex $a.ifIndex -DestinationPrefix 0.0.0.0/0 -ErrorAction Stop | Sort-Object RouteMetric | Select-Object -First 1).NextHop } catch {}
+  if ($gw -eq '0.0.0.0') { $gw = $null }
   if (-not $ip) { Add-Row "IP address" "None" "Problem" "Windows has no IPv4 address. Try Renew IP address in Optimize, or restart the router." }
   elseif ($ip.IPAddress -like '169.254.*') { Add-Row "IP address" "$($ip.IPAddress) (self-assigned)" "Problem" "The router didn't give this PC an address (DHCP failed). Restart the router, then use Renew IP address." }
   else { $how = if ($ip.PrefixOrigin -eq 'Dhcp') { "DHCP (automatic)" } else { "manual setting" }; Add-Row "IP address" "$($ip.IPAddress)/$($ip.PrefixLength) via $how" "OK" }

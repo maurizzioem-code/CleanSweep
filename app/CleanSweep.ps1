@@ -682,7 +682,10 @@ function Invoke-EthDiagnostics {
   $drvDate = $null; try { $drvDate = [datetime]$a.DriverDate } catch {}
   $age = if ($drvDate) { [int](((Get-Date) - $drvDate).TotalDays / 365) } else { $null }
   $drvText = "$($a.InterfaceDescription), driver $($a.DriverVersion)" + $(if ($drvDate) { " (" + $drvDate.ToString("MMM yyyy") + ")" } else { "" })
-  if ($age -ge 3) { Add-Row "Adapter driver" $drvText "Warning" "The driver is about $age years old. Check your laptop maker's support site or Windows Update > Advanced options > Optional updates for a newer network driver." }
+  # Windows' built-in drivers are always stamped June 2006, so their date says nothing about age
+  $inbox = ($a.DriverProvider -match '^Microsoft') -or ($drvDate -and $drvDate.Year -eq 2006 -and $drvDate.Month -eq 6)
+  if ($inbox) { Add-Row "Adapter driver" ($drvText + " - built into Windows, updated by Windows Update") "OK" }
+  elseif ($age -ge 3) { Add-Row "Adapter driver" $drvText "Warning" "The driver is about $age years old. Check your laptop maker's support site or Windows Update > Advanced options > Optional updates for a newer network driver." }
   else { Add-Row "Adapter driver" $drvText "OK" }
   if ($a.AdminStatus -ne 'Up') { Add-Row "Adapter enabled" "The adapter is disabled in Windows" "Problem" "Turn it on in Settings > Network & internet > Advanced network settings."; return $rows }
 
@@ -704,7 +707,9 @@ function Invoke-EthDiagnostics {
   if ($maxMbps -and $mbps -lt $maxMbps -and $mbps -le 100) { Add-Row "Link speed" $spTxt "Problem" "Your connection negotiated far below what the adapter supports. Usually a damaged or old (Cat5) cable, a bent connector pin, or a 100 Mbps router/switch port. Try a Cat5e or Cat6 cable and another port." }
   elseif ($maxMbps -and $mbps -lt $maxMbps) { Add-Row "Link speed" $spTxt "Warning" "Running below the adapter's maximum. This is normal if your router or switch port is slower; otherwise try another cable or port." }
   else { Add-Row "Link speed" $spTxt "OK" }
-  if ($a.FullDuplex) { Add-Row "Duplex" "Full duplex" "OK" } else { Add-Row "Duplex" "Half duplex" "Problem" "Half duplex causes collisions and slowdowns. Usually a cable fault or a forced speed setting - see the Speed & Duplex check." }
+  $isPhysical = [bool](Get-NetAdapter -Physical -ErrorAction Ignore | Where-Object ifIndex -eq $a.ifIndex)
+  if (-not $isPhysical) { Add-Row "Duplex" "Not reported (virtual or bridged adapter)" "Info" }
+  elseif ($a.FullDuplex) { Add-Row "Duplex" "Full duplex" "OK" } else { Add-Row "Duplex" "Half duplex" "Problem" "Half duplex causes collisions and slowdowns. Usually a cable fault or a forced speed setting - see the Speed & Duplex check." }
   if ($sd) {
     if ($sd.DisplayValue -match 'Auto') { Add-Row "Speed & Duplex setting" $sd.DisplayValue "OK" }
     else { Add-Row "Speed & Duplex setting" "Forced to '$($sd.DisplayValue)'" "Warning" "A forced speed can mismatch the router. Set it back to Auto Negotiation in Device Manager > Network adapters > your adapter > Advanced." }

@@ -72,7 +72,29 @@ foreach ($size in @($form.Size, $form.MinimumSize)) {
     Shot ("layout-{0}x{1}-{2}" -f $size.Width, $size.Height, ($p.Text -replace '[^\w]', ''))
   }
 }
-$form.Size = '820,620'
+$form.Size = '900,680'
+
+# ---------------------------------------------------------------- dashboard
+Show-Tab $dash.Page
+Step "Dashboard: live CPU and memory" { Update-Live; Update-Live; Note "    $($dash.CpuL.Text) | $($dash.RamL.Text) | charts: $script:HaveCharts"; if ($dash.CpuL.Text -notmatch '\d+%') { Write-Error "Live CPU not shown" } }
+Step "Dashboard: health check" {
+  $dash.Run.PerformClick()
+  Note "    Score: $($dash.Score.Text) ($($dash.Grade.Text))  $($dash.Status.Text)"
+  foreach ($i in $dash.List.Items) { $r = $i.Tag; Note "      [$($r.Status)] $($r.Area): $($r.Finding)$(if ($r.ActionText) { "  -> $($r.ActionText)" })" }
+  if ($dash.List.Items.Count -lt 8) { Write-Error "Too few findings ($($dash.List.Items.Count))" }
+  $sc = 0; if (-not [int]::TryParse($dash.Score.Text, [ref]$sc) -or $sc -lt 0 -or $sc -gt 100) { Write-Error "Bad score '$($dash.Score.Text)'" }
+  $cnc = @($dash.List.Items | Where-Object { $_.Tag.Finding -like 'Could not check*' }); foreach ($c in $cnc) { Note "    (could not check: $($c.Tag.Area))" }
+}
+Shot "dashboard"
+Step "Dashboard: second check records history" { $dash.Run.PerformClick(); $h = Get-History; Note "    history entries: $($h.Count)  trend: $($dash.Trend.Text)"; if ($h.Count -lt 2) { Write-Error "History not saved" } }
+Step "Dashboard: select finding shows advice" {
+  $it = $dash.List.Items | Where-Object { $_.Tag.Action -like 'tab:*' } | Select-Object -First 1
+  if (-not $it) { $it = $dash.List.Items[0] }
+  $it.Selected = $true; [Windows.Forms.Application]::DoEvents(); Note "    $($it.Tag.Area): button '$($dash.Do.Text)' enabled=$($dash.Do.Enabled) advice='$($dash.Advice.Text)'"
+  if ($it.Tag.Action -like 'tab:*') { $dash.Do.PerformClick(); Note "    navigated to: $($tabs.SelectedTab.Text)"; if ($tabs.SelectedTab -eq $dash.Page) { Write-Error "Action did not navigate" } }
+}
+Step "Dashboard: battery report action" { if (Get-CimInstance Win32_Battery) { Invoke-FindingAction 'battery' } else { Note "    no battery on this VM - skipped" } }
+Show-Tab $dash.Page; Shot "dashboard-selected"
 
 # ---------------------------------------------------------------- junk files
 Show-Tab $junk.Page

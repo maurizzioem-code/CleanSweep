@@ -1,7 +1,7 @@
 # CleanSweep - a simple disk, registry and shortcut cleaner for Windows 11
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Windows.Forms.Application]::EnableVisualStyles()
-$Version = "3.0"
+$Version = "3.1"
 $TestMode = ($env:CLEANSWEEP_TEST -eq "1")   # automated tests: message boxes answer themselves, nothing waits for a click
 # All message boxes go through CSMsg so automated tests can answer them
 if (-not ("CSMsg" -as [type])) {
@@ -46,7 +46,7 @@ function Test-Missing([string]$p) {
   return -not (Test-Path -LiteralPath $p)
 }
 
-$form = New-Object Windows.Forms.Form -Property @{Text="CleanSweep $Version - PC Cleaner and Network Optimizer"; Size='820,620'; StartPosition='CenterScreen'; Font=New-Object Drawing.Font("Segoe UI",10); MinimumSize='700,500'}
+$form = New-Object Windows.Forms.Form -Property @{Text="CleanSweep $Version - PC Cleaner and Network Optimizer"; Size='900,680'; StartPosition='CenterScreen'; Font=New-Object Drawing.Font("Segoe UI",10); MinimumSize='700,500'}
 $ico = Join-Path $PSScriptRoot "CleanSweep.ico"; if (Test-Path $ico) { $form.Icon = New-Object Drawing.Icon($ico) }
 $tabs = New-Object Windows.Forms.TabControl -Property @{Dock='Fill'}
 $form.Controls.Add($tabs)
@@ -933,5 +933,8 @@ $form.Add_Shown({
   if ($settings.LastCheck) { try { $due = ((Get-Date) - [datetime]$settings.LastCheck).TotalHours -ge 24 } catch {} }
   if ($settings.AutoCheck -and $due) { Check-Update $false }
 })
+
+# Feature modules (each adds its own tab)
+. (Join-Path $PSScriptRoot "modules\Dashboard.ps1")
 
 if (-not $TestMode) { [void]$form.ShowDialog() }

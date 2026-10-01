@@ -243,7 +243,7 @@ Step "Repair: System File Checker (runs 45 s, then cancelled)" {
   $script:RepairAutoCancelSec = 45; Start-Repairs @('sfc') "SFC"; $script:RepairAutoCancelSec = 0
   Note "    $($rep.Status.Text)  progress $($rep.Prog.Value)%"
   Note ("    output: " + (($rep.Out.Text -split "`r`n" | Where-Object { $_ } | Select-Object -Last 5) -join ' / '))
-  if ($rep.Out.Text -notmatch 'Beginning system scan|Verification') { Write-Error "SFC output not shown" }
+  if ($rep.Status.Text -ne 'Cancelled.' -or (Get-Process sfc -ErrorAction Ignore)) { Write-Error "SFC was not stopped: $($rep.Status.Text)" }
 }
 Shot "repair-sfc"
 Step "Repair: Windows Update repair" {

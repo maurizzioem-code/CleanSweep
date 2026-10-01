@@ -136,35 +136,48 @@ $drv.DiskMgmt.Add_Click({ Start-Process diskmgmt.msc })
 
 # ---------------------------------------------------------------- large file finder
 $LargeMin = 100MB
-function Find-LargeFiles($letters) {
-  $found = New-Object System.Collections.Generic.List[object]; $n = 0; $sw = [Diagnostics.Stopwatch]::StartNew()
-  $skip = @("$env:WINDIR".ToLower())
-  foreach ($l in $letters) {
-    $stack = New-Object System.Collections.Generic.Stack[string]; $stack.Push("$l\")
-    while ($stack.Count) {
-      if ($script:RepairCancel) { return $found }
-      $dir = $stack.Pop()
-      try {
-        foreach ($sub in [IO.Directory]::EnumerateDirectories($dir)) {
-          $di = New-Object IO.DirectoryInfo $sub
-          if ($di.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
-          if ($skip -contains $sub.ToLower() -or $di.Name -in 'System Volume Information','$Recycle.Bin','$WinREAgent') { continue }
-          $stack.Push($sub)
-        }
-        foreach ($f in [IO.Directory]::EnumerateFiles($dir)) {
-          $n++
-          if ($n % 500 -eq 0) { $drv.Status.Text = "Looking for large files on $l ... {0:N0} files checked" -f $n; [Windows.Forms.Application]::DoEvents(); if ($script:RepairCancel) { return $found } }
+# Fast file walker in C# on a background thread (a PowerShell loop takes minutes on a full drive)
+if (-not ([System.Management.Automation.PSTypeName]'CSLargeFiles').Type) {
+Add-Type -TypeDefinition @"
+using System; using System.IO; using System.Collections.Generic; using System.Threading.Tasks;
+public class CSLargeFiles {
+  public volatile bool Cancel; public long Checked; public List<FileInfo> Found = new List<FileInfo>();
+  public Task Start(string[] roots, long min, string[] skipDirs, string[] skipNames) {
+    var skipD = new HashSet<string>(skipDirs, StringComparer.OrdinalIgnoreCase); var skipN = new HashSet<string>(skipNames, StringComparer.OrdinalIgnoreCase);
+    return Task.Run(() => {
+      foreach (var root in roots) {
+        var stack = new Stack<DirectoryInfo>(); stack.Push(new DirectoryInfo(root));
+        while (stack.Count > 0 && !Cancel) {
+          var dir = stack.Pop();
           try {
-            $fi = New-Object IO.FileInfo $f
-            if ($fi.Length -ge $LargeMin -and $fi.Name -notin 'pagefile.sys','hiberfil.sys','swapfile.sys','DumpStack.log') {
-              $found.Add([pscustomobject]@{ Path=$fi.FullName; Name=$fi.Name; Folder=$fi.DirectoryName; Size=[double]$fi.Length; Modified=$fi.LastWriteTime })
+            foreach (var d in dir.EnumerateDirectories()) {
+              if ((d.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+              if (skipD.Contains(d.FullName) || skipN.Contains(d.Name)) continue;
+              stack.Push(d);
+            }
+            foreach (var f in dir.EnumerateFiles()) {
+              Checked++;
+              try { if (f.Length >= min && !skipN.Contains(f.Name)) lock (Found) Found.Add(f); } catch {}
             }
           } catch {}
         }
-      } catch {}
-    }
+      }
+    });
   }
-  $drv.Status.Text = "Checked {0:N0} files in {1:N0} s." -f $n, $sw.Elapsed.TotalSeconds
+}
+"@
+}
+function Find-LargeFiles($letters) {
+  $sw = [Diagnostics.Stopwatch]::StartNew(); $w = New-Object CSLargeFiles
+  $t = $w.Start([string[]]@($letters | ForEach-Object { "$_\" }), $LargeMin, [string[]]@($env:WINDIR), [string[]]@('System Volume Information','$Recycle.Bin','$WinREAgent','pagefile.sys','hiberfil.sys','swapfile.sys','DumpStack.log'))
+  while (-not $t.IsCompleted) {
+    if ($script:RepairCancel) { $w.Cancel = $true }
+    $drv.Status.Text = "Looking for large files on $($letters -join ', ') ... {0:N0} files checked" -f $w.Checked
+    for ($i = 0; $i -lt 3; $i++) { Start-Sleep -Milliseconds 100; [Windows.Forms.Application]::DoEvents() }
+  }
+  $drv.Status.Text = "Checked {0:N0} files in {1:N0} s." -f $w.Checked, $sw.Elapsed.TotalSeconds
+  $found = New-Object System.Collections.Generic.List[object]
+  foreach ($fi in $w.Found) { $found.Add([pscustomobject]@{ Path=$fi.FullName; Name=$fi.Name; Folder=$fi.DirectoryName; Size=[double]$fi.Length; Modified=$fi.LastWriteTime }) }
   return $found
 }
 

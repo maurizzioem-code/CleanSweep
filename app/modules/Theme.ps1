@@ -164,7 +164,7 @@ function Set-DarkTitleBar($f) {
 
 $script:NavItems = @()
 function New-NavItem($page, $glyph) {
-  $p = New-Object Windows.Forms.Panel -Property @{Dock='Top'; Height=40; Cursor='Hand'; BackColor=$Theme.Side; Margin='0'}
+  $p = New-Object Windows.Forms.Panel -Property @{Dock='Top'; Height=40; Cursor='Hand'; BackColor=$Theme.Side; Margin='0,0,0,0'}
   Set-DoubleBuffered $p
   $p.Tag = @{ Page=$page; Glyph=$glyph; Hover=$false }
   $p.Add_Paint({ param($s, $e)

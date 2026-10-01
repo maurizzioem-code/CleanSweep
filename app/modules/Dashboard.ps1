@@ -214,7 +214,7 @@ $hdrS = New-Lbl ("$env:COMPUTERNAME  {0}  $model  {0}  $osInfo" -f [char]0xB7) (
 Add-Rows $hdr @($hdrT, $hdrS)
 
 # ---- row 1: health score card + one-click actions card
-$row1 = New-Object Windows.Forms.TableLayoutPanel -Property @{Dock='Top'; Height=250; ColumnCount=2; RowCount=1; Margin='0'; Padding='0'}
+$row1 = New-Object Windows.Forms.TableLayoutPanel -Property @{Dock='Top'; Height=250; ColumnCount=2; RowCount=1; Margin='0,0,0,0'; Padding='0,0,0,0'}
 [void]$row1.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Absolute', 400)); [void]$row1.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Percent', 100))
 [void]$row1.RowStyles.Add((New-Object Windows.Forms.RowStyle 'Percent', 100))
 
@@ -241,7 +241,7 @@ $dash.Status = New-Lbl "Run a health check to see your score." (UiFont 9.5) $The
 $dash.Status.AutoEllipsis = $false
 $hBtns = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Bottom'; Height=44; WrapContents=$false}
 $dash.Run = New-Object Windows.Forms.Button -Property @{Text="Run health check"; AutoSize=$true; MinimumSize='150,34'; Margin='0,0,8,0'}
-$dash.Rep = New-Object Windows.Forms.Button -Property @{Text="Save report"; AutoSize=$true; MinimumSize='100,34'; Margin='0'; Enabled=$false}
+$dash.Rep = New-Object Windows.Forms.Button -Property @{Text="Save report"; AutoSize=$true; MinimumSize='100,34'; Margin='0,0,0,0'; Enabled=$false}
 Set-Primary $dash.Run
 $hBtns.Controls.AddRange(@($dash.Run, $dash.Rep))
 $hInfo.Controls.Add($hBtns); Add-Rows $hInfo @($dash.Grade, $dash.Trend, $dash.Status)
@@ -332,7 +332,7 @@ $dash.CpuL = $HW.cpu.Value; $dash.RamL = $HW.ram.Value
 
 # ---- row 3: recommendations
 $recT = New-Lbl "Recommendations" (UiFont 11 'Bold') $Theme.Text 'Top' 30
-$rec = New-Card 'Top' '4,4,4,10'; $rec.Height = 340; $rec.Margin = '0'
+$rec = New-Card 'Top' '4,4,4,10'; $rec.Height = 340; $rec.Margin = '0,0,0,0'
 $dash.List = New-Object Windows.Forms.ListView -Property @{View='Details'; FullRowSelect=$true; Dock='Fill'; HideSelection=$false; MultiSelect=$false}
 foreach ($c in @(@("Status",90), @("Area",130), @("Finding",440), @("Suggested action",190))) { [void]$dash.List.Columns.Add($c[0], $c[1]) }
 $recBottom = New-Object Windows.Forms.Panel -Property @{Dock='Bottom'; Height=50; Padding='12,6,12,0'}

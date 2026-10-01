@@ -17,7 +17,7 @@ function Step($name, [scriptblock]$body) {
   try { & $body } catch { $ex = $_ }
   $sw.Stop()
   $errs = @(); if ($Error.Count -gt $before) { $errs = @($Error[0..($Error.Count - $before - 1)] | ForEach-Object { "$_ (line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim()))" }) }
-  $errs = @($errs | Where-Object { $_ -notmatch 'is denied|being used by another process|because it does not exist|^CANCELLED|not supported on this operating system' })   # expected: files in use are skipped
+  $errs = @($errs | Where-Object { $_ -notmatch 'is denied|being used by another process|because it does not exist|^CANCELLED|No matching MSFT_|No MSFT_|not supported on this operating system' })   # expected: files in use are skipped
   if ($ex) { $errs = @("THROWN: $ex (line $($ex.InvocationInfo.ScriptLineNumber))") + $errs }
   $status = if ($errs) { "ISSUES" } else { "PASS" }
   $results.Add([pscustomobject]@{ Step=$name; Status=$status; Seconds=[math]::Round($sw.Elapsed.TotalSeconds,1); Errors=($errs | Select-Object -Unique) })

@@ -442,14 +442,18 @@ $sc.Clean.Add_Click({
 $script:NetKind = "Wi-Fi"
 function Get-EthAdapter {
   $wireless = 'Wi-?Fi|Wireless|802\.11|WLAN|Bluetooth'
+  $inet = @(Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction Ignore | ForEach-Object ifIndex)
+  # Prefer the wired adapter that carries internet traffic, then any connected one (e.g. laptop + dock)
   $a = Get-NetAdapter -Physical -ErrorAction Ignore |
     Where-Object { $_.NdisPhysicalMedium -eq 14 -and $_.InterfaceDescription -notmatch "$wireless|VPN|TAP-|Hyper-V Virtual" } |
-    Sort-Object @{e={$_.Status -eq 'Up'}; Descending=$true} | Select-Object -First 1
-  if ($a) { return $a }
+    Sort-Object @{e={$inet -contains $_.ifIndex}; Descending=$true}, @{e={$_.Status -eq 'Up'}; Descending=$true} | Select-Object -First 1
+  if ($a -and ($inet -contains $a.ifIndex -or -not $inet)) { return $a }
+  $phys = $a
   # Fallback (docks, USB adapters, virtual machines): the wired adapter Windows uses for the internet
   $r = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction Ignore | Sort-Object RouteMetric | ForEach-Object { Get-NetAdapter -InterfaceIndex $_.ifIndex -ErrorAction Ignore } |
     Where-Object { $_.InterfaceDescription -notmatch "$wireless|VPN|TAP-" -and $_.Name -notmatch '^vEthernet' } | Select-Object -First 1
-  return $r
+  if ($r) { return $r }
+  return $phys
 }
 # The adapter chosen in the Connection box
 # Interface metric for route ordering; some virtual/hidden interfaces can't be read, so treat them as last

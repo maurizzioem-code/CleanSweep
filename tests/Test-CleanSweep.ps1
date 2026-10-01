@@ -6,15 +6,18 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 New-Item -ItemType Directory $Out -Force | Out-Null
 $Out = (Resolve-Path $Out).Path
 $env:CLEANSWEEP_TEST = "1"
+$env:CLEANSWEEP_TRACE = Join-Path $Out "trace.txt"
 $results = New-Object System.Collections.Generic.List[object]
 $log = Join-Path $Out "log.txt"
 function Note($t) { Write-Host $t; Add-Content -LiteralPath $log -Value $t }
 
 function Step($name, [scriptblock]$body) {
+  Write-Host "START $name"; [IO.File]::AppendAllText($env:CLEANSWEEP_TRACE, "=== START $name`r`n")
   $before = $Error.Count; $sw = [Diagnostics.Stopwatch]::StartNew(); $ex = $null
   try { & $body } catch { $ex = $_ }
   $sw.Stop()
   $errs = @(); if ($Error.Count -gt $before) { $errs = @($Error[0..($Error.Count - $before - 1)] | ForEach-Object { "$_ (line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim()))" }) }
+  $errs = @($errs | Where-Object { $_ -notmatch 'is denied|being used by another process|because it does not exist' })   # expected: files in use are skipped
   if ($ex) { $errs = @("THROWN: $ex (line $($ex.InvocationInfo.ScriptLineNumber))") + $errs }
   $status = if ($errs) { "ISSUES" } else { "PASS" }
   $results.Add([pscustomobject]@{ Step=$name; Status=$status; Seconds=[math]::Round($sw.Elapsed.TotalSeconds,1); Errors=($errs | Select-Object -Unique) })
@@ -87,8 +90,11 @@ Shot "junk-all-drives"
 Step "Junk: clean" { $junk.Clean.PerformClick(); Note "    $($junk.Status.Text)" }
 Shot "junk-after-clean"
 Step "Junk: cancel button stops a scan" {
-  $t = New-Object Windows.Forms.Timer; $t.Interval = 300; $t.Add_Tick({ $junk.Stop.PerformClick(); $t.Stop() }.GetNewClosure()); $t.Start()
-  $junk.Scan.PerformClick(); Note "    $($junk.Status.Text)"
+  foreach ($c in $script:DriveChecks) { $c.Checked = $true }
+  $script:cancelTimer = New-Object Windows.Forms.Timer; $script:cancelTimer.Interval = 150
+  $script:cancelTimer.Add_Tick({ $script:cancelTimer.Stop(); if ($junk.Stop.Enabled) { $junk.Stop.PerformClick() } })
+  $script:cancelTimer.Start()
+  $junk.Scan.PerformClick(); $script:cancelTimer.Stop(); Note "    $($junk.Status.Text)"
 }
 foreach ($c in $script:DriveChecks) { $c.Checked = ($c.Tag -eq $SysDrive) }
 

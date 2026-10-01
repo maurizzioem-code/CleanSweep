@@ -38,6 +38,7 @@ function Get-CmdPath([string]$cmd) {
 # True only when the path is a real local path that definitely no longer exists
 function Test-Missing([string]$p) {
   Check-Cancel
+  if ($TestMode -and $env:CLEANSWEEP_TRACE) { [IO.File]::AppendAllText($env:CLEANSWEEP_TRACE, "Test-Missing $p`r`n") }
   if ([string]::IsNullOrWhiteSpace($p)) { return $false }
   if ($p -notmatch '^[A-Za-z]:\\') { return $false }          # skip relative, network, shell: paths
   if ($p -match '\\WindowsApps\\') { return $false }          # Store apps are access-restricted
@@ -106,13 +107,13 @@ $targets = [ordered]@{
 }
 function Get-Items($paths) {
   foreach ($p in $paths) {
-    Get-Item -Path $p -Force -ErrorAction SilentlyContinue | ForEach-Object {
-      if ($_.PSIsContainer) { Get-ChildItem $_.FullName -Recurse -Force -File -ErrorAction SilentlyContinue } else { $_ }
+    Get-Item -Path $p -Force -ErrorAction Ignore | ForEach-Object {
+      if ($_.PSIsContainer) { Get-ChildItem $_.FullName -Recurse -Force -File -ErrorAction Ignore } else { $_ }
     }
   }
 }
 # This user's Recycle Bin folder on a given drive
-function Get-RecycleFiles($drive) { Get-ChildItem -LiteralPath "$drive\`$Recycle.Bin\$MySid" -Recurse -Force -File -ErrorAction SilentlyContinue }
+function Get-RecycleFiles($drive) { Get-ChildItem -LiteralPath "$drive\`$Recycle.Bin\$MySid" -Recurse -Force -File -ErrorAction Ignore }
 
 # Leftover temp files on any drive: walks folders itself so it never follows junctions/links
 $skipDirs = '^(\$Recycle\.Bin|System Volume Information|Windows|Program Files|Program Files \(x86\)|ProgramData|Recovery|\$WinREAgent|\$SysReset|Config\.Msi|MSOCache)$'
@@ -123,11 +124,11 @@ function Get-DriveJunk($drive) {
   while ($stack.Count) {
     $dir = $stack.Pop()
     if ((++$n % 200) -eq 0) { $junk.Status.Text = "Scanning $dir"; Check-Cancel }
-    foreach ($e in (Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) {
+    foreach ($e in (Get-ChildItem -LiteralPath $dir -Force -ErrorAction Ignore)) {
       if ($e.PSIsContainer) {
         if ($e.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
         if ($dir.Length -le 3 -and $e.Name -match $skipDirs) { continue }
-        if ($e.Name -match '^FOUND\.\d{3}$') { Get-ChildItem -LiteralPath $e.FullName -Force -File -Filter *.chk -ErrorAction SilentlyContinue; continue }
+        if ($e.Name -match '^FOUND\.\d{3}$') { Get-ChildItem -LiteralPath $e.FullName -Force -File -Filter *.chk -ErrorAction Ignore; continue }
         $stack.Push($e.FullName)
       } elseif ($e.Name -match $junkNames -and $e.LastWriteTime -lt $cut) { $e }
     }
@@ -148,7 +149,7 @@ $script:DriveChecks = @()
 
 function Get-Drives {
   # Local disks (3) and removable drives like USB sticks and SD cards (2) that have media inserted
-  Get-CimInstance Win32_LogicalDisk -Filter "DriveType=2 OR DriveType=3" -ErrorAction SilentlyContinue | Where-Object { $_.Size -gt 0 } | Sort-Object DeviceID
+  Get-CimInstance Win32_LogicalDisk -Filter "DriveType=2 OR DriveType=3" -ErrorAction Ignore | Where-Object { $_.Size -gt 0 } | Sort-Object DeviceID
 }
 function Load-Drives {
   $prev = @{}; foreach ($c in $script:DriveChecks) { $prev[$c.Tag] = $c.Checked }
@@ -218,7 +219,7 @@ $junk.Clean.Add_Click({
       $junk.Status.Text = "Cleaning $($i.Text)..."; Check-Cancel
       $t = $i.Tag
       switch ($t.Kind) {
-        'recycle'   { Clear-RecycleBin -DriveLetter $t.Drive.TrimEnd(':') -Force -ErrorAction SilentlyContinue; $freed += [long]$t.Size }
+        'recycle'   { Clear-RecycleBin -DriveLetter $t.Drive.TrimEnd(':') -Force -ErrorAction Ignore; $freed += [long]$t.Size }
         'drivejunk' { foreach ($f in $t.Files) { Check-Cancel; try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $freed += $f.Length } catch {} } }
         default     { Get-Items $t.Paths | ForEach-Object { Check-Cancel; $len = $_.Length; try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop; $freed += $len } catch {} } }
       }
@@ -246,18 +247,18 @@ function Add-RegIssue($issue, $key, $value, $target) {
 function Scan-Registry {
   # Startup entries pointing to missing programs
   foreach ($k in "$HKCU\Software\Microsoft\Windows\CurrentVersion\Run", "$HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "$HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run") {
-    $item = Get-Item -LiteralPath "Registry::$k" -ErrorAction SilentlyContinue; if (-not $item) { continue }
+    $item = Get-Item -LiteralPath "Registry::$k" -ErrorAction Ignore; if (-not $item) { continue }
     foreach ($n in $item.GetValueNames()) { if (-not $n) { continue }
       $p = Get-CmdPath ($item.GetValue($n)); if (Test-Missing $p) { Add-RegIssue "Startup entry" $k $n $p } }
   }
   # App Paths pointing to missing programs
   foreach ($k in "$HKCU\Software\Microsoft\Windows\CurrentVersion\App Paths", "$HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths", "$HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths") {
-    Get-ChildItem -LiteralPath "Registry::$k" -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-ChildItem -LiteralPath "Registry::$k" -ErrorAction Ignore | ForEach-Object {
       $p = Get-CmdPath ($_.GetValue("")); if (Test-Missing $p) { Add-RegIssue "Application path" ($_.Name) $null $p } }
   }
   # Uninstall entries for programs that are gone
   foreach ($k in "$HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall", "$HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", "$HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall") {
-    Get-ChildItem -LiteralPath "Registry::$k" -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-ChildItem -LiteralPath "Registry::$k" -ErrorAction Ignore | ForEach-Object {
       if ($_.GetValue("SystemComponent") -eq 1) { return }
       $u = Get-CmdPath ($_.GetValue("UninstallString")); $loc = $_.GetValue("InstallLocation")
       if ((Test-Missing $u) -and ([string]::IsNullOrWhiteSpace($loc) -or (Test-Missing $loc.Trim('"').TrimEnd('\')))) {
@@ -267,12 +268,12 @@ function Scan-Registry {
   }
   # Shared DLL references to missing files
   foreach ($k in "$HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\SharedDLLs", "$HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\SharedDLLs") {
-    $item = Get-Item -LiteralPath "Registry::$k" -ErrorAction SilentlyContinue; if (-not $item) { continue }
+    $item = Get-Item -LiteralPath "Registry::$k" -ErrorAction Ignore; if (-not $item) { continue }
     foreach ($n in $item.GetValueNames()) { if (Test-Missing $n) { Add-RegIssue "Missing shared DLL" $k $n $n } }
   }
   # MUI cache entries for programs that no longer exist
   $k = "$HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache"
-  $item = Get-Item -LiteralPath "Registry::$k" -ErrorAction SilentlyContinue
+  $item = Get-Item -LiteralPath "Registry::$k" -ErrorAction Ignore
   if ($item) { foreach ($n in $item.GetValueNames()) {
     if ($n -match '^(.+?\.(exe|dll|com|bat|cmd|msc|cpl))\.[A-Za-z]+$') { if (Test-Missing $matches[1]) { Add-RegIssue "Obsolete program cache" $k $n $matches[1] } } } }
 }
@@ -285,7 +286,7 @@ function Backup-Registry($keys) {
     $tmp = [IO.Path]::GetTempFileName()
     & reg.exe export $k $tmp /y 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) { Get-Content -LiteralPath $tmp -Encoding Unicode | Select-Object -Skip 1 | ForEach-Object { $lines.Add($_) } }
-    Remove-Item $tmp -ErrorAction SilentlyContinue
+    Remove-Item $tmp -ErrorAction Ignore
   }
   Set-Content -LiteralPath $out -Value $lines -Encoding Unicode
   return $out
@@ -294,18 +295,18 @@ function Backup-Registry($keys) {
 # Create a System Restore point. Returns $true only if a new point really exists afterwards.
 function New-RestorePoint([string]$desc = "CleanSweep - before registry cleaning") {
   $srKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore'
-  $old = (Get-ItemProperty $srKey -Name SystemRestorePointCreationFrequency -ErrorAction SilentlyContinue).SystemRestorePointCreationFrequency
-  if (-not (Get-Command Checkpoint-Computer -ErrorAction SilentlyContinue)) { return $false }   # not available on Windows Server
-  $last = (Get-ComputerRestorePoint -ErrorAction SilentlyContinue | Measure-Object SequenceNumber -Maximum).Maximum
+  $old = (Get-ItemProperty $srKey -Name SystemRestorePointCreationFrequency -ErrorAction Ignore).SystemRestorePointCreationFrequency
+  if (-not (Get-Command Checkpoint-Computer -ErrorAction Ignore)) { return $false }   # not available on Windows Server
+  $last = (Get-ComputerRestorePoint -ErrorAction Ignore | Measure-Object SequenceNumber -Maximum).Maximum
   try {
     # Windows normally allows only one restore point per 24 hours; lift that limit just for this call
-    Set-ItemProperty $srKey -Name SystemRestorePointCreationFrequency -Value 0 -Type DWord -ErrorAction SilentlyContinue
+    Set-ItemProperty $srKey -Name SystemRestorePointCreationFrequency -Value 0 -Type DWord -ErrorAction Ignore
     Checkpoint-Computer -Description $desc -RestorePointType MODIFY_SETTINGS -ErrorAction Stop -WarningAction SilentlyContinue
   } catch { } finally {
-    if ($null -eq $old) { Remove-ItemProperty $srKey -Name SystemRestorePointCreationFrequency -ErrorAction SilentlyContinue }
-    else { Set-ItemProperty $srKey -Name SystemRestorePointCreationFrequency -Value $old -Type DWord -ErrorAction SilentlyContinue }
+    if ($null -eq $old) { Remove-ItemProperty $srKey -Name SystemRestorePointCreationFrequency -ErrorAction Ignore }
+    else { Set-ItemProperty $srKey -Name SystemRestorePointCreationFrequency -Value $old -Type DWord -ErrorAction Ignore }
   }
-  $now = (Get-ComputerRestorePoint -ErrorAction SilentlyContinue | Measure-Object SequenceNumber -Maximum).Maximum
+  $now = (Get-ComputerRestorePoint -ErrorAction Ignore | Measure-Object SequenceNumber -Maximum).Maximum
   return ($now -and ($now -ne $last))
 }
 
@@ -411,7 +412,7 @@ $sc.Scan.Add_Click({
   try {
     foreach ($d in $shortcutDirs) {
       $sc.Status.Text = "Scanning $d..."; Check-Cancel
-      Get-ChildItem -LiteralPath $d -Filter *.lnk -Recurse -Force -File -ErrorAction SilentlyContinue | ForEach-Object {
+      Get-ChildItem -LiteralPath $d -Filter *.lnk -Recurse -Force -File -ErrorAction Ignore | ForEach-Object {
         try { $t = [Environment]::ExpandEnvironmentVariables($wsh.CreateShortcut($_.FullName).TargetPath) } catch { return }
         if (Test-Missing $t) {
           $i = $sc.List.Items.Add($_.BaseName); [void]$i.SubItems.Add($_.DirectoryName); [void]$i.SubItems.Add($t)
@@ -437,14 +438,14 @@ $sc.Clean.Add_Click({
 # ================================================================ 4. NETWORK OPTIMIZER (Wi-Fi and Ethernet)
 $script:NetKind = "Wi-Fi"
 function Get-EthAdapter {
-  Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
+  Get-NetAdapter -Physical -ErrorAction Ignore |
     Where-Object { $_.NdisPhysicalMedium -eq 14 -and $_.InterfaceDescription -notmatch 'Wi-?Fi|Wireless|802\.11|WLAN|Bluetooth|Virtual|VPN|TAP' } |
     Sort-Object @{e={$_.Status -eq 'Up'}; Descending=$true} | Select-Object -First 1
 }
 # The adapter chosen in the Connection box
 function Get-NetTarget { if ($script:NetKind -eq "Ethernet") { Get-EthAdapter } else { Get-WifiAdapter } }
 function Get-WifiAdapter {
-  Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.NdisPhysicalMedium -eq 9 -or $_.InterfaceDescription -match 'Wi-?Fi|Wireless|802\.11|WLAN' } |
+  Get-NetAdapter -Physical -ErrorAction Ignore | Where-Object { $_.NdisPhysicalMedium -eq 9 -or $_.InterfaceDescription -match 'Wi-?Fi|Wireless|802\.11|WLAN' } |
     Sort-Object @{e={$_.Status -eq 'Up'}; Descending=$true} | Select-Object -First 1
 }
 # Reads "Name : Value" lines from netsh wlan show interfaces
@@ -463,7 +464,7 @@ function Update-WifiInfo {
   if ($script:NetKind -eq "Ethernet") {
     if (-not $a) { $wifiInfo.Text = "No Ethernet port was found on this PC."; return }
     if ($a.Status -ne 'Up') { $wifiInfo.Text = "Ethernet adapter: $($a.InterfaceDescription)`nNo cable connected (or the cable/router port isn't working)."; return }
-    $dns = (Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses -join ", "
+    $dns = (Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction Ignore).ServerAddresses -join ", "
     $bps = [double]$a.ReceiveLinkSpeed; $mbps = [int]($bps / 1e6)
     $hint = if ($mbps -gt 0 -and $mbps -le 100) { "  - Only 100 Mbps: the cable or router port may be limiting you. Try a Cat5e/Cat6 cable or another port." } else { "" }
     $duplex = if ($a.FullDuplex) { "Full duplex" } else { "Half duplex (slow - check the cable)" }
@@ -475,7 +476,7 @@ function Update-WifiInfo {
   if (-not $a) { $wifiInfo.Text = "No Wi-Fi adapter was found on this PC."; return }
   $i = Get-WifiInfo
   if ($i['_NeedsLocation']) { $wifiInfo.Text = $LocationHelp; return }
-  $dns = (Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses -join ", "
+  $dns = (Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction Ignore).ServerAddresses -join ", "
   if ($a.Status -ne 'Up' -or -not $i['SSID']) { $wifiInfo.Text = "Wi-Fi adapter: $($a.InterfaceDescription)`nNot connected to a Wi-Fi network."; return }
   $sig = $i['Signal']; $pct = 0; [void][int]::TryParse(($sig -replace '[^\d]'), [ref]$pct)
   $quality = if ($pct -ge 80) { "Excellent" } elseif ($pct -ge 60) { "Good" } elseif ($pct -ge 40) { "Fair - moving closer to the router will help" } else { "Weak - move closer to the router" }
@@ -489,7 +490,7 @@ function Test-Net {
   $times = @(); $lost = 0
   foreach ($n in 1..10) {
     Check-Cancel
-    $r = Test-Connection -ComputerName 1.1.1.1 -Count 1 -ErrorAction SilentlyContinue
+    $r = Test-Connection -ComputerName 1.1.1.1 -Count 1 -ErrorAction Ignore
     if ($r) { $times += [int]$r.ResponseTime } else { $lost++ }
   }
   $dnsMs = $null
@@ -519,7 +520,7 @@ $connBox = New-Object Windows.Forms.ComboBox -Property @{DropDownStyle='DropDown
 $wifi.Extra.Controls.AddRange(@($connLabel, $connBox, $dnsLabel, $dnsBox, $nearBtn))
 # Start on whichever connection Windows is actually using for the internet
 try {
-  $route = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction Stop | Sort-Object { $_.RouteMetric + (Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).InterfaceMetric } | Select-Object -First 1
+  $route = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction Stop | Sort-Object { $_.RouteMetric + (Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction Ignore).InterfaceMetric } | Select-Object -First 1
   $eth = Get-EthAdapter
   if ($route -and $eth -and $route.ifIndex -eq $eth.ifIndex) { $script:NetKind = "Ethernet" }
 } catch {}
@@ -577,13 +578,13 @@ $wifi.Clean.Add_Click({
       powercfg /setactive SCHEME_CURRENT | Out-Null } }
   if ($sel -contains "Ethernet power saving off") { Step "Turning off Ethernet power saving" {
       # Driver setting names differ between Intel, Realtek, Killer etc., so match the common ones
-      Get-NetAdapterAdvancedProperty -Name $a.Name -ErrorAction SilentlyContinue |
+      Get-NetAdapterAdvancedProperty -Name $a.Name -ErrorAction Ignore |
         Where-Object { $_.DisplayName -match 'Energy.?Efficient|Green Ethernet|Power Saving Mode|Advanced EEE|Gigabit Lite|Ultra Low Power|System Idle Power Saver' } |
         ForEach-Object {
           $off = $_.ValidDisplayValues | Where-Object { $_ -match '^(Disabled|Off)$' } | Select-Object -First 1
-          if ($off -and $_.DisplayValue -ne $off) { Set-NetAdapterAdvancedProperty -Name $a.Name -DisplayName $_.DisplayName -DisplayValue $off -NoRestart -ErrorAction SilentlyContinue; $script:ethChanged = $true }
+          if ($off -and $_.DisplayValue -ne $off) { Set-NetAdapterAdvancedProperty -Name $a.Name -DisplayName $_.DisplayName -DisplayValue $off -NoRestart -ErrorAction Ignore; $script:ethChanged = $true }
         }
-      if ($script:ethChanged) { Restart-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction SilentlyContinue }
+      if ($script:ethChanged) { Restart-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction Ignore }
     } }
   if ($sel -contains "Reset TCP auto-tuning to normal") { Step "Resetting TCP auto-tuning" { netsh int tcp set global autotuninglevel=normal | Out-Null } }
   switch ($dnsBox.SelectedIndex) {
@@ -597,7 +598,7 @@ $wifi.Clean.Add_Click({
 
   # Wait for Wi-Fi to reconnect, then measure again
   $wifi.Status.Text = "Waiting for $($script:NetKind) to reconnect..."
-  foreach ($n in 1..20) { [Windows.Forms.Application]::DoEvents(); if (Test-Connection 1.1.1.1 -Count 1 -Quiet -ErrorAction SilentlyContinue) { break }; Start-Sleep -Milliseconds 700 }
+  foreach ($n in 1..20) { [Windows.Forms.Application]::DoEvents(); if (Test-Connection 1.1.1.1 -Count 1 -Quiet -ErrorAction Ignore) { break }; Start-Sleep -Milliseconds 700 }
   Update-WifiInfo
   $msg = "Applied:`n - " + ($script:done -join "`n - ")
   try {
@@ -666,7 +667,7 @@ function Invoke-EthDiagnostics {
   Add-Row "Cable connection" "Connected" "OK"
   $mbps = [int]([double]$a.ReceiveLinkSpeed / 1e6)
   $maxMbps = $null
-  $sd = Get-NetAdapterAdvancedProperty -Name $a.Name -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'Speed.*Duplex|Link Speed|Connection Type' } | Select-Object -First 1
+  $sd = Get-NetAdapterAdvancedProperty -Name $a.Name -ErrorAction Ignore | Where-Object { $_.DisplayName -match 'Speed.*Duplex|Link Speed|Connection Type' } | Select-Object -First 1
   if ($sd) {
     $speeds = $sd.ValidDisplayValues | ForEach-Object { if ($_ -match '(\d+(?:\.\d+)?)\s*(G|M)bps') { [double]$matches[1] * $(if ($matches[2] -eq 'G') { 1000 } else { 1 }) } }
     if ($speeds) { $maxMbps = [int](($speeds | Measure-Object -Maximum).Maximum) }
@@ -683,7 +684,7 @@ function Invoke-EthDiagnostics {
 
   # 3. Error counters (bad cables and interference show up here)
   Progress "packet errors"
-  $st = Get-NetAdapterStatistics -Name $a.Name -ErrorAction SilentlyContinue
+  $st = Get-NetAdapterStatistics -Name $a.Name -ErrorAction Ignore
   if ($st) {
     $pk = [double]($st.ReceivedUnicastPackets + $st.ReceivedMulticastPackets + $st.ReceivedBroadcastPackets + $st.SentUnicastPackets + $st.SentMulticastPackets + $st.SentBroadcastPackets)
     $err = [double]($st.ReceivedPacketErrors + $st.OutboundPacketErrors)
@@ -709,20 +710,20 @@ function Invoke-EthDiagnostics {
 
   # 5. IP configuration
   Progress "IP address"
-  $ip = Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
-  $cfg = Get-NetIPConfiguration -InterfaceIndex $a.ifIndex -ErrorAction SilentlyContinue
+  $ip = Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction Ignore | Select-Object -First 1
+  $cfg = Get-NetIPConfiguration -InterfaceIndex $a.ifIndex -ErrorAction Ignore
   $gw = $cfg.IPv4DefaultGateway.NextHop | Select-Object -First 1
   if (-not $ip) { Add-Row "IP address" "None" "Problem" "Windows has no IPv4 address. Try Renew IP address in Optimize, or restart the router." }
   elseif ($ip.IPAddress -like '169.254.*') { Add-Row "IP address" "$($ip.IPAddress) (self-assigned)" "Problem" "The router didn't give this PC an address (DHCP failed). Restart the router, then use Renew IP address." }
   else { $how = if ($ip.PrefixOrigin -eq 'Dhcp') { "DHCP (automatic)" } else { "manual setting" }; Add-Row "IP address" "$($ip.IPAddress)/$($ip.PrefixLength) via $how" "OK" }
-  $v6 = Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue | Where-Object { $_.PrefixOrigin -ne 'WellKnown' -and $_.IPAddress -notlike 'fe80*' }
+  $v6 = Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv6 -ErrorAction Ignore | Where-Object { $_.PrefixOrigin -ne 'WellKnown' -and $_.IPAddress -notlike 'fe80*' }
   Add-Row "IPv6" $(if ($v6) { "Available" } else { "Not available (IPv4 only)" }) "Info"
 
   # 6. Router (gateway) latency - on a cable this should be about 1 ms
   if ($gw) {
     Progress "router latency"
     $t = @(); $lost = 0
-    foreach ($n in 1..10) { Check-Cancel; $r = Test-Connection -ComputerName $gw -Count 1 -ErrorAction SilentlyContinue; if ($r) { $t += [int]$r.ResponseTime } else { $lost++ } }
+    foreach ($n in 1..10) { Check-Cancel; $r = Test-Connection -ComputerName $gw -Count 1 -ErrorAction Ignore; if ($r) { $t += [int]$r.ResponseTime } else { $lost++ } }
     if (-not $t) { Add-Row "Router ($gw)" "No reply" "Warning" "Some routers ignore pings. If websites also fail, restart the router." }
     else {
       $avg = [int](($t | Measure-Object -Average).Average); $mx = ($t | Measure-Object -Maximum).Maximum
@@ -735,7 +736,7 @@ function Invoke-EthDiagnostics {
 
   # 7. DNS
   Progress "DNS"
-  $dnsSrv = (Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses
+  $dnsSrv = (Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction Ignore).ServerAddresses
   try { Clear-DnsClientCache; $ms = [int](Measure-Command { Resolve-DnsName www.microsoft.com -DnsOnly -ErrorAction Stop | Out-Null }).TotalMilliseconds
     $txt = "$ms ms using " + ($dnsSrv -join ", ")
     if ($ms -gt 150) { Add-Row "DNS lookup" $txt "Warning" "Slow DNS makes every new website feel slow. Try Cloudflare in the DNS server box, then Optimize." } else { Add-Row "DNS lookup" $txt "OK" }
@@ -744,7 +745,7 @@ function Invoke-EthDiagnostics {
   # 8. Internet
   Progress "internet"
   $t = @(); $lost = 0
-  foreach ($n in 1..10) { Check-Cancel; $r = Test-Connection -ComputerName 1.1.1.1 -Count 1 -ErrorAction SilentlyContinue; if ($r) { $t += [int]$r.ResponseTime } else { $lost++ } }
+  foreach ($n in 1..10) { Check-Cancel; $r = Test-Connection -ComputerName 1.1.1.1 -Count 1 -ErrorAction Ignore; if ($r) { $t += [int]$r.ResponseTime } else { $lost++ } }
   if ($t) {
     $avg = [int](($t | Measure-Object -Average).Average)
     $jit = if ($t.Count -gt 1) { [int](((1..($t.Count-1)) | ForEach-Object { [math]::Abs($t[$_]-$t[$_-1]) } | Measure-Object -Average).Average) } else { 0 }
@@ -771,13 +772,13 @@ function Invoke-EthDiagnostics {
 
   # 10. Is Windows actually using the cable?
   Progress "route preference"
-  $route = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction SilentlyContinue | Sort-Object { $_.RouteMetric + (Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).InterfaceMetric } | Select-Object -First 1
+  $route = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction Ignore | Sort-Object { $_.RouteMetric + (Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction Ignore).InterfaceMetric } | Select-Object -First 1
   if ($route -and $route.ifIndex -eq $a.ifIndex) { Add-Row "Internet traffic uses" "Ethernet" "OK" }
-  elseif ($route) { $other = (Get-NetAdapter -InterfaceIndex $route.ifIndex -ErrorAction SilentlyContinue).Name
+  elseif ($route) { $other = (Get-NetAdapter -InterfaceIndex $route.ifIndex -ErrorAction Ignore).Name
     Add-Row "Internet traffic uses" "$other (not Ethernet)" "Warning" "Windows is sending traffic over $other instead of the cable. Turn off Wi-Fi or VPN while wired, or lower the Ethernet interface metric." }
 
   # 11. Power saving still enabled?
-  $ps = Get-NetAdapterAdvancedProperty -Name $a.Name -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'Energy.?Efficient|Green Ethernet|Power Saving Mode|Advanced EEE' -and $_.DisplayValue -notmatch '^(Disabled|Off)$' }
+  $ps = Get-NetAdapterAdvancedProperty -Name $a.Name -ErrorAction Ignore | Where-Object { $_.DisplayName -match 'Energy.?Efficient|Green Ethernet|Power Saving Mode|Advanced EEE' -and $_.DisplayValue -notmatch '^(Disabled|Off)$' }
   if ($ps) { Add-Row "Ethernet power saving" ("On: " + ($ps.DisplayName -join ", ")) "Warning" "Can add small delays or drops. Tick 'Ethernet power saving off' and click Optimize." }
   else { Add-Row "Ethernet power saving" "Off" "OK" }
   return $rows

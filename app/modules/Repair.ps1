@@ -114,28 +114,29 @@ function Format-ToolOutput([string]$raw) {
 
 # Runs a console tool hidden, streams its output into the window, returns @{Code; Text}
 function Invoke-ConsoleTool([string]$exe, [string]$toolArgs, [string]$title) {
+  $ui = if ($script:ToolUI) { $script:ToolUI } else { $rep }   # which tab shows the output
   New-Item -ItemType Directory $RepairLogDir -Force | Out-Null
   $tmp = Join-Path $env:TEMP ("CleanSweep-" + [guid]::NewGuid().ToString("N") + ".txt")
   $psi = New-Object Diagnostics.ProcessStartInfo -Property @{ FileName=(Get-SysExe "cmd.exe"); Arguments="/c `"`"$exe`" $toolArgs > `"$tmp`" 2>&1`""; UseShellExecute=$false; CreateNoWindow=$true }
-  Write-RepairOut ">>> $title  ($exe $toolArgs)"
+  $ui.Out.AppendText(">>> $title  ($exe $toolArgs)`r`n")
   $p = [Diagnostics.Process]::Start($psi); $script:RepairProc = $p
-  $sw = [Diagnostics.Stopwatch]::StartNew(); $shown = ""; $baseText = $rep.Out.Text
+  $sw = [Diagnostics.Stopwatch]::StartNew(); $shown = ""; $baseText = $ui.Out.Text
   while (-not $p.HasExited) {
     for ($i = 0; $i -lt 5 -and -not $p.HasExited; $i++) { Start-Sleep -Milliseconds 100; [Windows.Forms.Application]::DoEvents() }
     if ($script:RepairAutoCancelSec -and $sw.Elapsed.TotalSeconds -gt $script:RepairAutoCancelSec) { $script:RepairCancel = $true }
     if ($script:RepairCancel) {
-      & taskkill.exe /PID $p.Id /T /F 2>&1 | Out-Null; Write-RepairOut "`r`n(Cancelled - Windows stops the scan safely; nothing is left half-changed.)"; break
+      & taskkill.exe /PID $p.Id /T /F 2>&1 | Out-Null; break
     }
     $txt = Format-ToolOutput (Read-ToolOutput $tmp)
     if ($txt -ne $shown) {
-      $shown = $txt; $rep.Out.Text = $baseText + $txt; $rep.Out.SelectionStart = $rep.Out.TextLength; $rep.Out.ScrollToCaret()
-      $m = [regex]::Matches($txt, '(\d{1,3})(?:[.,]\d)?\s?%'); if ($m.Count) { $v = [int]$m[$m.Count - 1].Groups[1].Value; if ($v -le 100) { $rep.Prog.Value = $v } }
+      $shown = $txt; $ui.Out.Text = $baseText + $txt; $ui.Out.SelectionStart = $ui.Out.TextLength; $ui.Out.ScrollToCaret()
+      $m = [regex]::Matches($txt, '(\d{1,3})(?:[.,]\d)?\s?%'); if ($m.Count) { $v = [int]$m[$m.Count - 1].Groups[1].Value; if ($v -le 100) { $ui.Prog.Value = $v } }
     }
-    $rep.Status.Text = "$title... " + ("{0:mm\:ss}" -f $sw.Elapsed) + $(if ($rep.Prog.Value) { "  ($($rep.Prog.Value)%)" } else { "" })
+    $ui.Status.Text = "$title... " + ("{0:mm\:ss}" -f $sw.Elapsed) + $(if ($ui.Prog.Value) { "  ($($ui.Prog.Value)%)" } else { "" })
   }
   $p.WaitForExit(5000) | Out-Null
   $txt = Format-ToolOutput (Read-ToolOutput $tmp); $code = if ($script:RepairCancel) { -1 } else { $p.ExitCode }
-  $rep.Out.Text = $baseText + $txt + $(if ($script:RepairCancel) { "`r`n(Cancelled)" } else { "" }) + "`r`n"; $rep.Out.SelectionStart = $rep.Out.TextLength; $rep.Out.ScrollToCaret()
+  $ui.Out.Text = $baseText + $txt + $(if ($script:RepairCancel) { "`r`n(Cancelled)" } else { "" }) + "`r`n"; $ui.Out.SelectionStart = $ui.Out.TextLength; $ui.Out.ScrollToCaret()
   try { Copy-Item $tmp (Join-Path $RepairLogDir ("{0}-{1}.txt" -f ($title -replace '[^\w]+','-'), (Get-Date -Format "yyyyMMdd-HHmmss"))) -ErrorAction Ignore; Remove-Item $tmp -Force -ErrorAction Ignore } catch {}
   $script:RepairProc = $null
   return @{ Code=$code; Text=$txt; Cancelled=$script:RepairCancel }

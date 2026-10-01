@@ -174,6 +174,45 @@ Step "Network: Ethernet diagnostics" {
 Step "Network: switch to Wi-Fi" { $connBox.SelectedItem = "Wi-Fi"; Note "    $($wifiInfo.Text -replace "`n", ' / ')" }
 Shot "network-wifi"
 
+# ---------------------------------------------------------------- drives
+Show-Tab $drv.Page
+Step "Drives: list volumes with checkboxes" {
+  foreach ($i in $drv.List.Items) { Note ("      " + (@($i.Text) + @($i.SubItems | Select-Object -Skip 1 | ForEach-Object Text) -join ' | ') + $(if ($i.Tag.IsSystemPart) { "  [not selectable]" })) }
+  if (-not (@($drv.List.Items) | Where-Object { $_.Tag.Letter -eq $SysDrive })) { Write-Error "System drive missing" }
+  if ($drv.Junk.Enabled) { Write-Error "Buttons enabled with nothing ticked" }
+}
+Step "Drives: hidden partitions can't be ticked" {
+  $h = @($drv.List.Items) | Where-Object { $_.Tag.IsSystemPart } | Select-Object -First 1
+  if ($h) { $h.Checked = $true; [Windows.Forms.Application]::DoEvents(); Note "    $($h.Text) checked after click: $($h.Checked)"; if ($h.Checked) { Write-Error "Hidden partition could be ticked" } } else { Note "    no hidden partitions on this VM" }
+}
+Step "Drives: tick system drive enables actions" {
+  $c = @($drv.List.Items) | Where-Object { $_.Tag.Letter -eq $SysDrive }; $c.Checked = $true; [Windows.Forms.Application]::DoEvents()
+  Note "    checked: $((Get-CheckedDrives | ForEach-Object Letter) -join ',')  buttons enabled: $($drv.Check.Enabled)"; if (-not $drv.Check.Enabled) { Write-Error "Buttons not enabled" }
+}
+Shot "drives"
+Step "Drives: check for errors (chkdsk /scan)" {
+  $script:RepairAutoCancelSec = 600; $drv.Check.PerformClick(); $script:RepairAutoCancelSec = 0
+  Note "    $($drv.Status.Text)"; Note ("    output: " + (($drv.Out.Text -split "`r`n" | Where-Object { $_ } | Select-Object -Last 4) -join ' / '))
+  if ($drv.Status.Text -match 'failed|Cancelled') { Write-Error $drv.Status.Text }
+}
+Step "Drives: optimize" {
+  $script:RepairAutoCancelSec = 600; $drv.Opt.PerformClick(); $script:RepairAutoCancelSec = 0
+  Note "    $($drv.Status.Text)"; Note ("    output: " + (($drv.Out.Text -split "`r`n" | Where-Object { $_ } | Select-Object -Last 4) -join ' / '))
+  if ($drv.Status.Text -match 'failed|Cancelled') { Write-Error $drv.Status.Text }
+}
+Step "Drives: find large files" {
+  $big = "$env:TEMP\CleanSweepBigTest.bin"; $fs = [IO.File]::Create($big); $fs.SetLength(150MB); $fs.Close()
+  $drv.Large.PerformClick(); Note "    $($drv.Status.Text)"
+  foreach ($x in ($script:LargeFiles | Sort-Object Size -Descending | Select-Object -First 5)) { Note "      $(Fmt $x.Size)  $($x.Path)" }
+  if (-not ($script:LargeFiles | Where-Object Path -eq $big)) { Write-Error "Test file not found" }
+  $lv = $script:LargeForm.Controls | Where-Object { $_ -is [Windows.Forms.ListView] }
+  $it = @($lv.Items) | Where-Object { $_.Tag.Path -eq $big }; $it.Checked = $true
+  ($script:LargeForm.Controls | Where-Object { $_ -is [Windows.Forms.FlowLayoutPanel] }).Controls[1].PerformClick()
+  Note "    after Recycle Bin: test file exists = $(Test-Path $big)"; if (Test-Path $big) { Write-Error "File not moved"; Remove-Item $big -Force }
+}
+Step "Drives: Clean junk on ticked drives" { $drv.Junk.PerformClick(); Note "    tab: $($tabs.SelectedTab.Text)  junk drives: $((Get-SelectedDrives) -join ',')  $($junk.Status.Text)" }
+Show-Tab $drv.Page; Shot "drives-after"
+
 # ---------------------------------------------------------------- repair
 Show-Tab $rep.Page
 Step "Repair: tool list" { Note ("    " + ((@($rep.List.Items) | ForEach-Object Text) -join ', ') + "   admin: $(Test-IsAdmin)"); if ($rep.List.Items.Count -lt 5) { Write-Error "Tool list incomplete" } }

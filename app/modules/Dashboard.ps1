@@ -21,7 +21,7 @@ $HealthChecks = [ordered]@{
       $pct = [math]::Round($d.FreeSpace / $d.Size * 100); $free = Fmt $d.FreeSpace
       $sys = ($d.DeviceID -eq $SysDrive)
       if (($sys -and $d.FreeSpace -lt 10GB) -or $pct -lt 10) {
-        New-Finding "Storage" "Problem" "$($d.DeviceID) is almost full: $free free ($pct%)" "Windows slows down and updates can fail when the system drive is nearly full. Clean junk files, then move or delete large files you don't need." "tab:junk" "Clean junk files" }
+        New-Finding "Storage" "Problem" "$($d.DeviceID) is almost full: $free free ($pct%)" "Windows slows down and updates can fail when the system drive is nearly full. Clean junk files, then use Find large files on the Drives tab to spot big files you don't need." "tab:drives" "Free up space" }
       elseif ($pct -lt 20) {
         New-Finding "Storage" "Warning" "$($d.DeviceID) is getting full: $free free ($pct%)" "Keeping at least 15-20% free helps performance and leaves room for updates." "tab:junk" "Clean junk files" }
       else { New-Finding "Storage" "OK" "$($d.DeviceID) $free free ($pct%)" }
@@ -295,6 +295,7 @@ function Invoke-FindingAction($action) {
     '^tab:junk$'   { $tabs.SelectedTab = $junk.Page }
     '^tab:net$'    { $tabs.SelectedTab = $wifi.Page }
     '^tab:repair$' { $tabs.SelectedTab = $rep.Page }
+    '^tab:drives$' { $tabs.SelectedTab = $drv.Page; foreach ($i in $drv.List.Items) { if ($i.Tag.Letter -eq $SysDrive) { $i.Checked = $true } } }
     '^settings:(.+)$' { Start-Process $matches[1] }
     '^run:(\S+)\s*(.*)$' { if ($matches[2]) { Start-Process $matches[1] -ArgumentList $matches[2] } else { Start-Process $matches[1] } }
     '^battery$' {

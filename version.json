@@ -1,6 +1,6 @@
 {
-  "version": "3.0",
-  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-3.0.zip",
-  "sha256": "99D7B804147E5659B4D8DFA69DFFDCAA99C1918DF8547BEC94E0261FD4C5C65D",
-  "notes": "CleanSweep is now a Windows app (CleanSweep.exe) with Desktop and Start menu shortcuts. Junk cleaner can scan other drives and USB sticks. New Ethernet diagnostics report. Safer defaults: optional network tweaks are off unless you tick them, harmless registry leftovers are no longer ticked. Fixed the empty Network Optimizer list and faster connection tests on networks that block ping."
+  "version": "3.1",
+  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-3.1.zip",
+  "sha256": "CC05C9E0C53BFB3DA2549F3A8076285023ECE4A34DDBFBD9054BAD311BE366CB",
+  "notes": "New Dashboard: a health score out of 100 with recommendations covering storage, drive health, memory, startup apps, security, Windows Update, crashes, devices, battery and internet. Live CPU and memory graphs, score history, and a savable health report. The checks only read your PC - nothing changes unless you click a suggested action."
 }

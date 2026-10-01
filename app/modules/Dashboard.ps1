@@ -48,8 +48,10 @@ $HealthChecks = [ordered]@{
         New-Finding "Drive health" "Problem" "$name has $($rc.ReadErrorsUncorrected) unreadable-data errors$info" "Uncorrected read errors often come before a drive fails. Back up your files now." "settings:ms-settings:backup" "Open backup settings" }
       elseif ($rc -and $rc.Wear -ge 90) {
         New-Finding "Drive health" "Problem" "$name is near the end of its rated life$info" "The SSD has used most of its rated write endurance. Back up and plan a replacement." "settings:ms-settings:backup" "Open backup settings" }
-      elseif (($rc -and $rc.Wear -ge 70) -or ($rc -and $rc.Temperature -gt 65)) {
-        New-Finding "Drive health" "Warning" "$name needs watching$info" "Wear above 70% or temperatures above 65 C are worth keeping an eye on. Make sure backups are up to date." }
+      elseif ($rc -and $rc.Wear -ge 70) {
+        New-Finding "Drive health" "Warning" "$name is wearing out$info" "The SSD has used over 70% of its rated life. Make sure backups are up to date." "settings:ms-settings:backup" "Open backup settings" }
+      elseif ($rc -and $rc.Temperature -gt 70) {
+        New-Finding "Drive health" "Warning" "$name is running hot$info" "Above 70 C the drive slows itself down. Keep the laptop's air vents clear and avoid soft surfaces under it." }
       else { New-Finding "Drive health" "OK" "$name is healthy$info" }
     }
   }

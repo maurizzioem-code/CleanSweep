@@ -48,15 +48,14 @@ Note "PowerShell: $($PSVersionTable.PSVersion)   DPI scale: $([Windows.Forms.Scr
 # ---------------------------------------------------------------- load
 # Load the app in THIS scope (dot-source) so its functions and controls can be driven
 $before = $Error.Count; $sw = [Diagnostics.Stopwatch]::StartNew()
-$startOut = . "$PSScriptRoot\..\app\CleanSweep.ps1" *>&1 | Out-String
+. "$PSScriptRoot\..\app\CleanSweep.ps1" *> "$Out\startup.txt"
+$startOut = Get-Content "$Out\startup.txt" -Raw
 $sw.Stop()
 $loadErrs = @(); if ($Error.Count -gt $before) { $loadErrs = @($Error[0..($Error.Count - $before - 1)] | ForEach-Object { "$_ (line $($_.InvocationInfo.ScriptLineNumber))" }) }
 if ($startOut -match 'STARTUP ERROR') { $loadErrs += $startOut.Trim() }
 if (-not $form) { $loadErrs += "Main window was not created" }
 $results.Add([pscustomobject]@{ Step="App loads without errors"; Status=$(if ($loadErrs) { "ISSUES" } else { "PASS" }); Seconds=[math]::Round($sw.Elapsed.TotalSeconds,1); Errors=$loadErrs })
 Note "[$(if ($loadErrs) { 'ISSUES' } else { 'PASS' })] App loads ($([math]::Round($sw.Elapsed.TotalSeconds,1))s)"; foreach ($e in $loadErrs) { Note "    $e" }
-if (-not $form) { throw "Main window was not created" }
-}
 if (-not $form) { $results | ConvertTo-Json -Depth 4 | Set-Content "$Out\results.json"; exit 1 }
 $form.StartPosition = 'Manual'; $form.Location = '0,0'
 $form.Show(); [Windows.Forms.Application]::DoEvents()

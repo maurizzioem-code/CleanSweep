@@ -174,6 +174,48 @@ Step "Network: Ethernet diagnostics" {
 Step "Network: switch to Wi-Fi" { $connBox.SelectedItem = "Wi-Fi"; Note "    $($wifiInfo.Text -replace "`n", ' / ')" }
 Shot "network-wifi"
 
+# ---------------------------------------------------------------- repair
+Show-Tab $rep.Page
+Step "Repair: tool list" { Note ("    " + ((@($rep.List.Items) | ForEach-Object Text) -join ', ') + "   admin: $(Test-IsAdmin)"); if ($rep.List.Items.Count -lt 5) { Write-Error "Tool list incomplete" } }
+Step "Repair: quick Windows health check (DISM /CheckHealth)" {
+  Start-Repairs @('dism-check') "Check"; Note "    $($rep.Status.Text)"
+  Note ("    output: " + (($rep.Out.Text -split "`r`n" | Where-Object { $_ } | Select-Object -Last 4) -join ' / '))
+  if ($rep.Status.Text -match 'Failed') { Write-Error "DISM CheckHealth failed: $($rep.Status.Text)" }
+}
+Shot "repair-dism"
+Step "Repair: cancel stops a running scan" {
+  $script:RepairAutoCancelSec = 15; Start-Repairs @('dism-scan') "Scan"; $script:RepairAutoCancelSec = 0
+  Note "    $($rep.Status.Text)  busy=$script:RepairBusy  dism still running: $([bool](Get-Process dism -ErrorAction Ignore))"
+  if ($rep.Status.Text -ne 'Cancelled.') { Write-Error "Cancel did not work: $($rep.Status.Text)" }
+}
+Step "Repair: System File Checker (full run)" {
+  $script:RepairAutoCancelSec = 1500; Start-Repairs @('sfc') "SFC"; $script:RepairAutoCancelSec = 0
+  Note "    $($rep.Status.Text)  progress $($rep.Prog.Value)%"
+  Note ("    output: " + (($rep.Out.Text -split "`r`n" | Where-Object { $_ } | Select-Object -Last 5) -join ' / '))
+  if ($rep.Status.Text -match 'Failed|Cancelled') { Write-Error "SFC: $($rep.Status.Text)" }
+}
+Shot "repair-sfc"
+Step "Repair: Windows Update repair" {
+  Set-Service wuauserv -StartupType Disabled   # simulate a tool that disabled updates
+  Start-Repairs @('wu-reset') "WU"; Note "    $($rep.Status.Text)"
+  $bk = Get-WuBackups; Note "    backups: $(($bk | ForEach-Object Name) -join ', ')   wuauserv start type: $((Get-Service wuauserv).StartType)"
+  if ($bk.Count -lt 1) { Write-Error "No backup folders created" }
+  if ((Get-Service wuauserv).StartType -eq 'Disabled') { Write-Error "wuauserv still disabled" }
+  if (-not (Test-Path "$env:WINDIR\SoftwareDistribution")) { Note "    (SoftwareDistribution not recreated yet - Windows makes it on next scan)" }
+  Note ("    tools now: " + ((@($rep.List.Items) | ForEach-Object Text) -join ', '))
+}
+Step "Repair: undo Windows Update repair" {
+  Start-Repairs @('wu-undo') "Undo"; Note "    $($rep.Status.Text)   wuauserv start type: $((Get-Service wuauserv).StartType)"
+  if (-not (Test-Path "$env:WINDIR\SoftwareDistribution")) { Write-Error "SoftwareDistribution not restored" }
+  if ((Get-Service wuauserv).StartType -ne 'Disabled') { Write-Error "Start type not restored" }
+  Set-Service wuauserv -StartupType Manual
+}
+Step "Repair: delete backups" {
+  Start-Repairs @('wu-reset') "WU"; Start-Repairs @('wu-purge') "Purge"; Note "    $($rep.Status.Text)"
+  if ((Get-WuBackups).Count) { Write-Error "Backups remain" }
+}
+Shot "repair-wu"
+
 # ---------------------------------------------------------------- updates
 Show-Tab $upd.Page
 Step "Updates: check" { Check-Update $false; Note "    $($upd.Status.Text)" }

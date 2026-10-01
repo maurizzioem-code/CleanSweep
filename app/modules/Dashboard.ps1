@@ -101,7 +101,7 @@ $HealthChecks = [ordered]@{
     $last = $null; try { $last = (New-Object -ComObject Microsoft.Update.AutoUpdate).Results.LastInstallationSuccessDate } catch {}
     if ($last -and $last.Year -gt 2000) {
       $days = [int]((Get-Date) - $last).TotalDays
-      if ($days -gt 45) { New-Finding "Windows Update" "Warning" "Updates last installed $days days ago" "Security fixes come out monthly. Check Windows Update." "settings:ms-settings:windowsupdate" "Open Windows Update" }
+      if ($days -gt 45) { New-Finding "Windows Update" "Warning" "Updates last installed $days days ago" "Security fixes come out monthly. Check Windows Update; if updates keep failing, use Repair Windows Update on the Repair tab." "settings:ms-settings:windowsupdate" "Open Windows Update" }
       else { New-Finding "Windows Update" "OK" "Updates installed $days days ago" }
     } else { New-Finding "Windows Update" "Info" "Last update date not available" "" "settings:ms-settings:windowsupdate" "Open Windows Update" }
     $pending = (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
@@ -144,7 +144,7 @@ $HealthChecks = [ordered]@{
     $bsod = @(Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-WER-SystemErrorReporting'; Id=1001; StartTime=$since30} -ErrorAction Ignore).Count
     $power = @(Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-Kernel-Power'; Id=41; StartTime=$since30} -ErrorAction Ignore).Count
     $apps = @(Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error'; Id=1000; StartTime=$since7} -ErrorAction Ignore)
-    if ($bsod) { New-Finding "Stability" "Problem" "$bsod blue-screen crash(es) in the last 30 days" "Repeated blue screens usually point to a driver or hardware problem. Note the stop code in Reliability Monitor and update the related driver." "run:perfmon.exe /rel" "Open Reliability Monitor" }
+    if ($bsod) { New-Finding "Stability" "Problem" "$bsod blue-screen crash(es) in the last 30 days" "Repeated blue screens usually point to a driver or hardware problem. Note the stop code in Reliability Monitor and update the related driver. If Windows files are damaged, the Recommended repair on the Repair tab can fix them." "tab:repair" "Open Repair tools" }
     elseif ($power) { New-Finding "Stability" "Warning" "$power unexpected shutdown(s) in the last 30 days" "The PC lost power or froze. If you didn't hold the power button, check Reliability Monitor." "run:perfmon.exe /rel" "Open Reliability Monitor" }
     else { New-Finding "Stability" "OK" "No crashes or unexpected shutdowns in 30 days" }
     if ($apps.Count -ge 5) {
@@ -294,6 +294,7 @@ function Invoke-FindingAction($action) {
   switch -Regex ($action) {
     '^tab:junk$'   { $tabs.SelectedTab = $junk.Page }
     '^tab:net$'    { $tabs.SelectedTab = $wifi.Page }
+    '^tab:repair$' { $tabs.SelectedTab = $rep.Page }
     '^settings:(.+)$' { Start-Process $matches[1] }
     '^run:(\S+)\s*(.*)$' { if ($matches[2]) { Start-Process $matches[1] -ArgumentList $matches[2] } else { Start-Process $matches[1] } }
     '^battery$' {

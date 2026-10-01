@@ -6,7 +6,7 @@ on:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - name: Build CleanSweep.exe
@@ -20,7 +20,7 @@ jobs:
             if ($e) { $e | ForEach-Object { Write-Host "::error file=$($f.Name),line=$($_.Extent.StartLineNumber)::$($_.Message)" }; exit 1 } else { "OK $($f.Name)" }
           }
       - name: Functional and layout tests
-        timeout-minutes: 12
+        timeout-minutes: 35
         continue-on-error: true
         shell: powershell
         run: .\tests\Test-CleanSweep.ps1 -Out test-output

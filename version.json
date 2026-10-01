@@ -1,6 +1,6 @@
 {
-  "version": "2.7",
-  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-2.7.zip",
-  "sha256": "D8CD3044506106CB4F29E272AA5D31DC6856670C823617235AA463AEF6670BE4",
-  "notes": "Network Optimizer now supports Ethernet too: choose Wi-Fi or Ethernet, see link speed and cable warnings, and turn off Energy Efficient/Green Ethernet power saving."
+  "version": "3.0",
+  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-3.0.zip",
+  "sha256": "99D7B804147E5659B4D8DFA69DFFDCAA99C1918DF8547BEC94E0261FD4C5C65D",
+  "notes": "CleanSweep is now a Windows app (CleanSweep.exe) with Desktop and Start menu shortcuts. Junk cleaner can scan other drives and USB sticks. New Ethernet diagnostics report. Safer defaults: optional network tweaks are off unless you tick them, harmless registry leftovers are no longer ticked. Fixed the empty Network Optimizer list and faster connection tests on networks that block ping."
 }

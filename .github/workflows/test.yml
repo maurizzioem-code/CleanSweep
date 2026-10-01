@@ -34,8 +34,8 @@ jobs:
           "exe exit code: $($p.ExitCode)" | Tee-Object -Append "$o\exe.txt"
           Start-Sleep 20
           Get-ChildItem "$env:LOCALAPPDATA\CleanSweep" -Recurse | ForEach-Object { "file: $($_.FullName.Replace($env:LOCALAPPDATA,''))" } | Tee-Object -Append "$o\exe.txt"
-          foreach ($l in "$([Environment]::GetFolderPath('Desktop'))\CleanSweep.lnk", "$([Environment]::GetFolderPath('Programs'))\CleanSweep.lnk") {
-            if (Test-Path $l) { $s = (New-Object -ComObject WScript.Shell).CreateShortcut($l); "shortcut OK: $l -> $($s.TargetPath)" } else { "shortcut MISSING: $l" } } | Tee-Object -Append "$o\exe.txt"
+          $(foreach ($l in "$([Environment]::GetFolderPath('Desktop'))\CleanSweep.lnk", "$([Environment]::GetFolderPath('Programs'))\CleanSweep.lnk") {
+            if (Test-Path $l) { $s = (New-Object -ComObject WScript.Shell).CreateShortcut($l); "shortcut OK: $l -> $($s.TargetPath)" } else { "shortcut MISSING: $l" } }) | Tee-Object -Append "$o\exe.txt"
           $run = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object CommandLine -like "*CleanSweep.ps1*"
           "app process running: $([bool]$run)" | Tee-Object -Append "$o\exe.txt"
           $w = Get-Process | Where-Object { $_.MainWindowTitle -like "CleanSweep*" } | Select-Object -First 1

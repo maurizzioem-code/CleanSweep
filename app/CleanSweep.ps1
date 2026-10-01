@@ -236,12 +236,14 @@ $junk.Clean.Add_Click({
 $HKLM = "HKEY_LOCAL_MACHINE"; $HKCU = "HKEY_CURRENT_USER"
 $backupDir = Join-Path ([Environment]::GetFolderPath('MyDocuments')) "CleanSweep Backups"
 
-function Add-RegIssue($issue, $key, $value, $target) {
+# Only entries with a visible effect are ticked by default. Shared DLL and program-name cache entries
+# have no performance benefit, so they are listed for information and left unticked.
+function Add-RegIssue($issue, $key, $value, $target, [bool]$checked = $true) {
   $i = $reg.List.Items.Add($issue)
   [void]$i.SubItems.Add($(if ($value) { "$key  [$value]" } else { $key }))
   [void]$i.SubItems.Add($target)
   $i.Tag = [pscustomobject]@{ Key=$key; Value=$value }
-  $i.Checked = $true
+  $i.Checked = $checked
 }
 
 function Scan-Registry {
@@ -269,13 +271,13 @@ function Scan-Registry {
   # Shared DLL references to missing files
   foreach ($k in "$HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\SharedDLLs", "$HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\SharedDLLs") {
     $item = Get-Item -LiteralPath "Registry::$k" -ErrorAction Ignore; if (-not $item) { continue }
-    foreach ($n in $item.GetValueNames()) { if (Test-Missing $n) { Add-RegIssue "Missing shared DLL" $k $n $n } }
+    foreach ($n in $item.GetValueNames()) { if (Test-Missing $n) { Add-RegIssue "Missing shared DLL (no benefit to remove)" $k $n $n $false } }
   }
   # MUI cache entries for programs that no longer exist
   $k = "$HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache"
   $item = Get-Item -LiteralPath "Registry::$k" -ErrorAction Ignore
   if ($item) { foreach ($n in $item.GetValueNames()) {
-    if ($n -match '^(.+?\.(exe|dll|com|bat|cmd|msc|cpl))\.[A-Za-z]+$') { if (Test-Missing $matches[1]) { Add-RegIssue "Obsolete program cache" $k $n $matches[1] } } } }
+    if ($n -match '^(.+?\.(exe|dll|com|bat|cmd|msc|cpl))\.[A-Za-z]+$') { if (Test-Missing $matches[1]) { Add-RegIssue "Obsolete program name cache (no benefit to remove)" $k $n $matches[1] $false } } } }
 }
 
 function Backup-Registry($keys) {
@@ -438,9 +440,15 @@ $sc.Clean.Add_Click({
 # ================================================================ 4. NETWORK OPTIMIZER (Wi-Fi and Ethernet)
 $script:NetKind = "Wi-Fi"
 function Get-EthAdapter {
-  Get-NetAdapter -Physical -ErrorAction Ignore |
-    Where-Object { $_.NdisPhysicalMedium -eq 14 -and $_.InterfaceDescription -notmatch 'Wi-?Fi|Wireless|802\.11|WLAN|Bluetooth|Virtual|VPN|TAP' } |
+  $wireless = 'Wi-?Fi|Wireless|802\.11|WLAN|Bluetooth'
+  $a = Get-NetAdapter -Physical -ErrorAction Ignore |
+    Where-Object { $_.NdisPhysicalMedium -eq 14 -and $_.InterfaceDescription -notmatch "$wireless|VPN|TAP-|Hyper-V Virtual" } |
     Sort-Object @{e={$_.Status -eq 'Up'}; Descending=$true} | Select-Object -First 1
+  if ($a) { return $a }
+  # Fallback (docks, USB adapters, virtual machines): the wired adapter Windows uses for the internet
+  $r = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction Ignore | Sort-Object RouteMetric | ForEach-Object { Get-NetAdapter -InterfaceIndex $_.ifIndex -ErrorAction Ignore } |
+    Where-Object { $_.InterfaceDescription -notmatch "$wireless|VPN|TAP-" -and $_.Name -notmatch '^vEthernet' } | Select-Object -First 1
+  return $r
 }
 # The adapter chosen in the Connection box
 function Get-NetTarget { if ($script:NetKind -eq "Ethernet") { Get-EthAdapter } else { Get-WifiAdapter } }
@@ -485,23 +493,35 @@ function Update-WifiInfo {
     "Band: $band     Channel: $($i['Channel'])     Type: $($i['Radio type'])`n" +
     "Speed: $($i['Receive rate (Mbps)']) Mbps down / $($i['Transmit rate (Mbps)']) Mbps up (link speed)     DNS: $dns"
 }
+# One latency sample in ms ($null = no reply). Uses ICMP ping with a 1 s timeout; if the network
+# blocks ping (many workplaces, hotspots and cloud VMs do), -Tcp measures a TCP connect to port 443 instead.
+$script:Pinger = New-Object System.Net.NetworkInformation.Ping
+function Get-PingMs([string]$target, [switch]$Tcp) {
+  if ($Tcp) {
+    $c = New-Object System.Net.Sockets.TcpClient; $sw = [Diagnostics.Stopwatch]::StartNew()
+    try { $t = $c.ConnectAsync($target, 443); if ($t.Wait(1500) -and $c.Connected) { return [int]$sw.ElapsedMilliseconds } } catch {} finally { $c.Close() }
+    return $null
+  }
+  try { $r = $script:Pinger.Send($target, 1000); if ($r.Status -eq 'Success') { return [int]$r.RoundtripTime } } catch {}
+  return $null
+}
 # Latency, jitter, packet loss and DNS lookup time
 function Test-Net {
-  $times = @(); $lost = 0
-  foreach ($n in 1..10) {
-    Check-Cancel
-    $r = Test-Connection -ComputerName 1.1.1.1 -Count 1 -ErrorAction Ignore
-    if ($r) { $times += [int]$r.ResponseTime } else { $lost++ }
+  $times = @(); $lost = 0; $mode = "ping"
+  foreach ($n in 1..10) { Check-Cancel; $ms = Get-PingMs 1.1.1.1; if ($null -ne $ms) { $times += $ms } else { $lost++ } }
+  if (-not $times) {   # ping blocked? measure with TCP instead
+    $mode = "tcp"; $lost = 0
+    foreach ($n in 1..10) { Check-Cancel; $ms = Get-PingMs 1.1.1.1 -Tcp; if ($null -ne $ms) { $times += $ms } else { $lost++ } }
   }
   $dnsMs = $null
   try { Clear-DnsClientCache; $dnsMs = [int](Measure-Command { Resolve-DnsName ("www.microsoft.com") -DnsOnly -ErrorAction Stop | Out-Null }).TotalMilliseconds } catch {}
   $avg = if ($times) { [int](($times | Measure-Object -Average).Average) } else { $null }
   $jit = if ($times.Count -gt 1) { [int](((1..($times.Count-1)) | ForEach-Object { [math]::Abs($times[$_] - $times[$_-1]) } | Measure-Object -Average).Average) } else { 0 }
-  [pscustomobject]@{ Ping=$avg; Jitter=$jit; Loss=[int]($lost*10); Dns=$dnsMs }
+  [pscustomobject]@{ Ping=$avg; Jitter=$jit; Loss=[int]($lost*10); Dns=$dnsMs; Mode=$mode }
 }
 function Fmt-Net($t) {
   if ($null -eq $t.Ping) { return "No internet response (100% packet loss)." }
-  "Ping $($t.Ping) ms, jitter $($t.Jitter) ms, packet loss $($t.Loss)%, DNS lookup " + $(if ($null -ne $t.Dns) { "$($t.Dns) ms" } else { "failed" })
+  $(if ($t.Mode -eq "tcp") { "(ping is blocked on this network - measured with TCP) " } else { "" }) + "Ping $($t.Ping) ms, jitter $($t.Jitter) ms, packet loss $($t.Loss)%, DNS lookup " + $(if ($null -ne $t.Dns) { "$($t.Dns) ms" } else { "failed" })
 }
 
 $wifi = New-Tab "Network Optimizer" @(@("Optimization",300), @("What it does",560)) "Click Test connection to measure your connection, then Optimize."
@@ -523,11 +543,11 @@ try {
   $route = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction Stop | Sort-Object { $_.RouteMetric + (Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction Ignore).InterfaceMetric } | Select-Object -First 1
   $eth = Get-EthAdapter
   if ($route -and $eth -and $route.ifIndex -eq $eth.ifIndex) { $script:NetKind = "Ethernet" }
+  elseif ($eth -and -not (Get-WifiAdapter)) { $script:NetKind = "Ethernet" }   # no Wi-Fi card at all
 } catch {}
 $connBox.SelectedItem = $script:NetKind
 $connBox.Add_SelectedIndexChanged({
   $script:NetKind = $connBox.SelectedItem; $script:NetBefore = $null
-Load-NetOpts
   $nearBtn.Enabled = ($script:NetKind -eq "Wi-Fi")
   $wifi.Status.Text = "Click Test connection to measure your $($script:NetKind), then Optimize."
   Load-NetOpts; Update-WifiInfo
@@ -552,6 +572,7 @@ function Load-NetOpts {
   $wifi.List.EndUpdate()
 }
 $script:NetBefore = $null
+Load-NetOpts    # fill the options list on startup
 
 $wifi.Scan.Add_Click({
   Set-Busy $wifi $true; Update-WifiInfo
@@ -598,7 +619,7 @@ $wifi.Clean.Add_Click({
 
   # Wait for Wi-Fi to reconnect, then measure again
   $wifi.Status.Text = "Waiting for $($script:NetKind) to reconnect..."
-  foreach ($n in 1..20) { [Windows.Forms.Application]::DoEvents(); if (Test-Connection 1.1.1.1 -Count 1 -Quiet -ErrorAction Ignore) { break }; Start-Sleep -Milliseconds 700 }
+  foreach ($n in 1..20) { [Windows.Forms.Application]::DoEvents(); if (($null -ne (Get-PingMs 1.1.1.1)) -or ($null -ne (Get-PingMs 1.1.1.1 -Tcp))) { break }; Start-Sleep -Milliseconds 700 }
   Update-WifiInfo
   $msg = "Applied:`n - " + ($script:done -join "`n - ")
   try {
@@ -723,7 +744,7 @@ function Invoke-EthDiagnostics {
   if ($gw) {
     Progress "router latency"
     $t = @(); $lost = 0
-    foreach ($n in 1..10) { Check-Cancel; $r = Test-Connection -ComputerName $gw -Count 1 -ErrorAction Ignore; if ($r) { $t += [int]$r.ResponseTime } else { $lost++ } }
+    foreach ($n in 1..10) { Check-Cancel; $ms = Get-PingMs $gw; if ($null -ne $ms) { $t += $ms } else { $lost++ } }
     if (-not $t) { Add-Row "Router ($gw)" "No reply" "Warning" "Some routers ignore pings. If websites also fail, restart the router." }
     else {
       $avg = [int](($t | Measure-Object -Average).Average); $mx = ($t | Measure-Object -Maximum).Maximum
@@ -745,11 +766,13 @@ function Invoke-EthDiagnostics {
   # 8. Internet
   Progress "internet"
   $t = @(); $lost = 0
-  foreach ($n in 1..10) { Check-Cancel; $r = Test-Connection -ComputerName 1.1.1.1 -Count 1 -ErrorAction Ignore; if ($r) { $t += [int]$r.ResponseTime } else { $lost++ } }
+  $how = "Ping"
+  foreach ($n in 1..10) { Check-Cancel; $ms = Get-PingMs 1.1.1.1; if ($null -ne $ms) { $t += $ms } else { $lost++ } }
+  if (-not $t) { $how = "TCP connect (ping blocked)"; $lost = 0; foreach ($n in 1..10) { Check-Cancel; $ms = Get-PingMs 1.1.1.1 -Tcp; if ($null -ne $ms) { $t += $ms } else { $lost++ } } }
   if ($t) {
     $avg = [int](($t | Measure-Object -Average).Average)
     $jit = if ($t.Count -gt 1) { [int](((1..($t.Count-1)) | ForEach-Object { [math]::Abs($t[$_]-$t[$_-1]) } | Measure-Object -Average).Average) } else { 0 }
-    $txt = "Ping $avg ms, jitter $jit ms, loss $($lost*10)%"
+    $txt = "$how $avg ms, jitter $jit ms, loss $($lost*10)%"
     if ($lost -ge 20 -or $avg -gt 100) { Add-Row "Internet" $txt "Problem" "If the router checks above are OK, this usually points to your internet provider or modem." }
     elseif ($lost -gt 0 -or $jit -gt 20 -or $avg -gt 50) { Add-Row "Internet" $txt "Warning" "Some lag or jitter. Can be busy network, provider congestion, or other devices downloading." }
     else { Add-Row "Internet" $txt "OK" }

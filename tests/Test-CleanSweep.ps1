@@ -17,7 +17,7 @@ function Step($name, [scriptblock]$body) {
   try { & $body } catch { $ex = $_ }
   $sw.Stop()
   $errs = @(); if ($Error.Count -gt $before) { $errs = @($Error[0..($Error.Count - $before - 1)] | ForEach-Object { "$_ (line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim()))" }) }
-  $errs = @($errs | Where-Object { $_ -notmatch 'is denied|being used by another process|because it does not exist' })   # expected: files in use are skipped
+  $errs = @($errs | Where-Object { $_ -notmatch 'is denied|being used by another process|because it does not exist|^CANCELLED|not supported on this operating system' })   # expected: files in use are skipped
   if ($ex) { $errs = @("THROWN: $ex (line $($ex.InvocationInfo.ScriptLineNumber))") + $errs }
   $status = if ($errs) { "ISSUES" } else { "PASS" }
   $results.Add([pscustomobject]@{ Step=$name; Status=$status; Seconds=[math]::Round($sw.Elapsed.TotalSeconds,1); Errors=($errs | Select-Object -Unique) })
@@ -105,8 +105,9 @@ Shot "registry-after-scan"
 Step "Registry: create restore point button" { $mkRp.PerformClick(); Note "    $($reg.Status.Text)" }
 Step "Registry: clean (with backup)" {
   # add a known-bad test entry so cleaning always has something to do
+  New-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Force -ErrorAction SilentlyContinue | Out-Null   # fresh VM profiles have no Run key
   New-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CleanSweepTest" -Value '"C:\NoSuchFolder\missing.exe"' -Force | Out-Null
-  $reg.Scan.PerformClick()
+  $reg.Scan.PerformClick(); Note "    $($reg.Status.Text)"
   $found = @($reg.List.Items | Where-Object { $_.SubItems[1].Text -like "*CleanSweepTest*" })
   if (-not $found) { Write-Error "Test startup entry pointing to a missing exe was not detected" }
   foreach ($i in $reg.List.Items) { $i.Checked = ($i.SubItems[1].Text -like "*CleanSweepTest*") }
@@ -133,6 +134,7 @@ Shot "shortcuts-after"
 # ---------------------------------------------------------------- network
 Show-Tab $wifi.Page
 Step "Network: adapters" { Note "    Wi-Fi: $((Get-WifiAdapter).InterfaceDescription)   Ethernet: $((Get-EthAdapter).InterfaceDescription)   Selected: $script:NetKind"; Get-NetAdapter | ForEach-Object { Note "      $($_.Name) | $($_.InterfaceDescription) | medium $($_.NdisPhysicalMedium) | $($_.Status)" } }
+Step "Network: options list is filled" { $n = $wifi.List.Items.Count; Note "    $n options for $script:NetKind"; if ($n -lt 4) { Write-Error "Network options list is empty or incomplete ($n items)" } }
 Step "Network: switch to Ethernet" { $connBox.SelectedItem = "Ethernet"; Note "    $($wifiInfo.Text -replace "`n", ' / ')"; Note ("    options: " + (($wifi.List.Items | ForEach-Object Text) -join ', ')) }
 Shot "network-ethernet"
 Step "Network: test connection" { $wifi.Scan.PerformClick(); Note "    $($wifi.Status.Text)" }

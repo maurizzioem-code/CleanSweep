@@ -213,6 +213,7 @@ function Show-LargeFiles($files, $letters) {
     }
     $top.Text = "Moved $ok file(s) to the Recycle Bin. Empty it from the Junk Files tab to free the space."
   })
+  Use-DarkDialog $f; $top.ForeColor = $Theme.Text
   if (-not $TestMode) { [void]$f.ShowDialog($form) } else { $f.Show($form); [Windows.Forms.Application]::DoEvents() }   # tests drive it non-modally
   return $f
 }

@@ -423,6 +423,7 @@ function Invoke-FindingAction($action) {
     '^tab:net$'    { $tabs.SelectedTab = $wifi.Page }
     '^tab:repair$' { $tabs.SelectedTab = $rep.Page }
     '^tab:drives$' { $tabs.SelectedTab = $drv.Page; foreach ($i in $drv.List.Items) { if ($i.Tag.Letter -eq $SysDrive) { $i.Checked = $true } } }
+    '^schedule$'   { Show-AutoCleanDialog }
     '^settings:(.+)$' { Start-Process $matches[1] }
     '^run:(\S+)\s*(.*)$' { if ($matches[2]) { Start-Process $matches[1] -ArgumentList $matches[2] } else { Start-Process $matches[1] } }
     '^battery$' {

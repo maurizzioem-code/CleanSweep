@@ -180,6 +180,12 @@ function Apply-Theme($root) {
   }
 }
 
+# Dark styling for pop-up windows created after start-up
+function Use-DarkDialog($f) {
+  $f.BackColor = $Theme.Bg; $f.ForeColor = $Theme.Text
+  Apply-Theme $f; Set-DarkTitleBar $f
+}
+
 # ---------------------------------------------------------------- window shell: dark title bar, sidebar, hidden tab strip
 function Set-DarkTitleBar($f) {
   On-Handle $f { param($x)

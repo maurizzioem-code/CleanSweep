@@ -1,7 +1,7 @@
 # CleanSweep - a simple disk, registry and shortcut cleaner for Windows 11
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Windows.Forms.Application]::EnableVisualStyles()
-$Version = "4.0"
+$Version = "4.1"
 $TestMode = ($env:CLEANSWEEP_TEST -eq "1")   # automated tests: message boxes answer themselves, nothing waits for a click
 # All message boxes go through CSMsg so automated tests can answer them
 if (-not ("CSMsg" -as [type])) {
@@ -92,26 +92,7 @@ function Set-Busy($t, [bool]$busy) {
 $L = $env:LOCALAPPDATA; $W = $env:WINDIR
 $SysDrive = $env:SystemDrive.TrimEnd('\')           # usually C:
 $MySid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-# Windows junk (only lives on the system drive)
-$targets = [ordered]@{
-  "User Temp Files"             = @("$env:TEMP")
-  "Windows Temp Files"          = @("$W\Temp")
-  "Windows Update Cache"        = @("$W\SoftwareDistribution\Download")
-  "Prefetch Files"              = @("$W\Prefetch")
-  "Thumbnail Cache"             = @("$L\Microsoft\Windows\Explorer\thumbcache_*.db")
-  "Crash Dumps & Error Reports" = @("$L\CrashDumps","$L\Microsoft\Windows\WER","$env:ProgramData\Microsoft\Windows\WER")
-  "Chrome Cache"                = @("$L\Google\Chrome\User Data\*\Cache","$L\Google\Chrome\User Data\*\Code Cache")
-  "Edge Cache"                  = @("$L\Microsoft\Edge\User Data\*\Cache","$L\Microsoft\Edge\User Data\*\Code Cache")
-  "Firefox Cache"               = @("$L\Mozilla\Firefox\Profiles\*\cache2")
-  "Delivery Optimization"       = @("$W\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache")
-}
-function Get-Items($paths) {
-  foreach ($p in $paths) {
-    Get-Item -Path $p -Force -ErrorAction Ignore | ForEach-Object {
-      if ($_.PSIsContainer) { Get-ChildItem $_.FullName -Recurse -Force -File -ErrorAction Ignore } else { $_ }
-    }
-  }
-}
+. (Join-Path $PSScriptRoot "modules\JunkTargets.ps1")   # $targets and Get-Items
 # This user's Recycle Bin folder on a given drive
 function Get-RecycleFiles($drive) { Get-ChildItem -LiteralPath "$drive\`$Recycle.Bin\$MySid" -Recurse -Force -File -ErrorAction Ignore }
 
@@ -665,6 +646,7 @@ $nearBtn.Add_Click({
     elseif ($cur) { "Your channel ($cur) is not heavily crowded." } else { "" }
   $tipL = New-Object Windows.Forms.Label -Property @{Dock='Bottom'; Height=56; Padding='8,6,8,6'; Text=$tip}
   $dlg.Controls.Add($lv); $dlg.Controls.Add($tipL)
+  if (Get-Command Use-DarkDialog -ErrorAction Ignore) { Use-DarkDialog $dlg }
   [void]$dlg.ShowDialog($form)
 })
 # ---------------------------------------------------------------- Ethernet diagnostics
@@ -843,6 +825,7 @@ function Show-DiagReport($rows) {
     if ($sd.ShowDialog() -eq 'OK') { Set-Content -LiteralPath $sd.FileName -Value $report -Encoding UTF8; $tip.Text = "Saved to $($sd.FileName)" } }.GetNewClosure())
   $bar.Controls.AddRange(@($copy, $save))
   $dlg.Controls.Add($lv); $dlg.Controls.Add($tip); $dlg.Controls.Add($bar)
+  if (Get-Command Use-DarkDialog -ErrorAction Ignore) { Use-DarkDialog $dlg }
   [void]$dlg.ShowDialog($form)
 }
 
@@ -871,7 +854,7 @@ if (Test-Path $settingsFile) {
 if ($settings.UpdateUrl -match '/OWNER/') { $settings.UpdateUrl = $DefaultUpdateUrl }  # upgrade from 2.2 placeholder
 function Save-Settings {
   New-Item -ItemType Directory -Path $AppDir -Force | Out-Null
-  [pscustomobject]$settings | ConvertTo-Json | Set-Content -LiteralPath $settingsFile -Encoding UTF8
+  [pscustomobject]$settings | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $settingsFile -Encoding UTF8
 }
 function Say($msg, $icon = "Information") { [void][CSMsg]::Show($msg, "CleanSweep Updates", "OK", $icon) }
 
@@ -940,6 +923,7 @@ $form.Add_Shown({
 . (Join-Path $PSScriptRoot "modules\Dashboard.ps1")
 . (Join-Path $PSScriptRoot "modules\Repair.ps1")
 . (Join-Path $PSScriptRoot "modules\Drives.ps1")
+. (Join-Path $PSScriptRoot "modules\Schedule.ps1")
 
 # Windows 11 style dark shell: sidebar, dark controls, accent buttons
 foreach ($b in @($junk.Scan, $reg.Scan, $sc.Scan, $wifi.Scan, $rep.Rec, $upd.Check)) { if ($b) { Set-Primary $b } }

@@ -280,6 +280,70 @@ Shot "repair-wu"
 
 # ---------------------------------------------------------------- updates
 Show-Tab $upd.Page
+# ---------------------------------------------------------------- automatic cleanup schedule
+function Shot-Window($w, $name) {
+  [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 400; [Windows.Forms.Application]::DoEvents()
+  $bmp = New-Object Drawing.Bitmap $w.Width, $w.Height; $g = [Drawing.Graphics]::FromImage($bmp)
+  $g.CopyFromScreen($w.Location, [Drawing.Point]::Empty, $w.Size); $g.Dispose(); $bmp.Save((Join-Path $Out "$name.png"), [Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
+}
+Step "Schedule: card starts Off" {
+  if (Get-AutoCleanTask) { Remove-AutoCleanSchedule }
+  Update-AutoCleanCard; Note "    $($ac.Status.Text) | $($ac.Last.Text)"
+  if ($ac.Status.Text -notmatch '^Off') { throw "card should say Off" }
+}
+Step "Schedule: set weekly cleanup in the settings window" {
+  $tabs.SelectedTab = $dash.Page; Show-AutoCleanDialog; $u = $script:AcUI; $u.Form.TopMost = $true
+  $u.On.Checked = $true; $u.Freq.SelectedIndex = 1; $u.Day.SelectedItem = 'Sunday'; $u.Time.SelectedIndex = 38
+  $u.Recycle.Checked = $true; $u.RecycleDays.SelectedItem = '30'
+  Note "    ticked: $((@($u.Cats | Where-Object Checked | ForEach-Object Tag)) -join ', ')"
+  Shot-Window $u.Form "schedule-dialog"
+  Save-AutoCleanDialog
+  $t = Get-AutoCleanTask; if (-not $t) { throw "task not created: $($u.Tip.Text)" }
+  $tr = $t.Triggers[0]; $info = Get-ScheduledTaskInfo -InputObject $t
+  Note "    task: $($t.TaskPath)$($t.TaskName)  state=$($t.State)  runLevel=$($t.Principal.RunLevel)  logon=$($t.Principal.LogonType)"
+  Note "    trigger: weekly days=$($tr.DaysOfWeek) interval=$($tr.WeeksInterval) start=$($tr.StartBoundary)  next=$($info.NextRunTime)"
+  Note "    settings: noBattery=$($t.Settings.DisallowStartIfOnBatteries) catchUp=$($t.Settings.StartWhenAvailable) idle=$($t.Settings.RunOnlyIfIdle) limit=$($t.Settings.ExecutionTimeLimit)"
+  Note "    action: $($t.Actions[0].Execute) $($t.Actions[0].Arguments)"
+  Note "    card: $($ac.Status.Text)"
+  if ($t.Principal.RunLevel -ne 'Highest') { throw "task should run with admin rights" }
+  if ($info.NextRunTime.DayOfWeek -ne 'Sunday' -or $info.NextRunTime.Hour -ne 19) { throw "next run should be Sunday 7 PM, got $($info.NextRunTime)" }
+  if ($ac.Status.Text -notmatch '^On - every Sunday at 7:00 PM') { throw "card text wrong" }
+  $cfg = Get-AutoCleanConfig; Note "    saved: $($cfg.Freq) $($cfg.Day) $($cfg.Minutes) min, recycle $($cfg.RecycleDays) days, cats $($cfg.Cats.Count)"
+  if ($cfg.RecycleDays -ne 30 -or $cfg.Cats.Count -lt 3) { throw "settings not saved" }
+}
+$scroll.AutoScrollPosition = New-Object Drawing.Point 0, 0
+Shot "dashboard-schedule"
+Step "Schedule: Run now removes old junk, keeps recent files" {
+  $old = "$env:TEMP\CleanSweepOld.tmp"; $new = "$env:TEMP\CleanSweepNew.tmp"
+  Set-Content $old 'x'; Set-Content $new 'x'
+  $o = Get-Item $old; $o.CreationTime = (Get-Date).AddDays(-3); $o.LastWriteTime = (Get-Date).AddDays(-3)
+  $sw = [Diagnostics.Stopwatch]::StartNew(); Start-AutoCleanNow; Note "    run took $([int]$sw.Elapsed.TotalSeconds) s"
+  $h = Get-AutoCleanHistory | Select-Object -Last 1
+  Note "    history: $($h.Trigger) freed $($h.Freed) bytes, $($h.Files) files, skipped $($h.Skipped) | $($h.Details)"
+  Note "    card: $($ac.Last.Text)"
+  Note "    log: $((Get-Content (Join-Path $AppDir 'logs\autoclean.log') -Tail 2) -join ' / ')"
+  if (Test-Path $old) { throw "3-day-old temp file was not removed" }
+  if (-not (Test-Path $new)) { throw "a file from today was removed" }
+  if (-not $h -or $h.Trigger -ne 'Manual') { throw "no history row written" }
+  Remove-Item $new -Force
+}
+Step "Schedule: task starts from Task Scheduler" {
+  $n0 = @(Get-AutoCleanHistory).Count
+  Start-ScheduledTask -TaskPath $AcTaskPath -TaskName $AcTaskName
+  $end = (Get-Date).AddSeconds(120); while ((Get-Date) -lt $end -and @(Get-AutoCleanHistory).Count -le $n0) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 500 }
+  $info = Get-ScheduledTaskInfo -TaskPath $AcTaskPath -TaskName $AcTaskName
+  $h = Get-AutoCleanHistory | Select-Object -Last 1
+  if (@(Get-AutoCleanHistory).Count -gt $n0) { Note "    scheduled run finished: $($h.Trigger), freed $($h.Freed) bytes  (last result $($info.LastTaskResult))" }
+  else { Note "    scheduled run did not finish within 120 s (last result $($info.LastTaskResult), last run $($info.LastRunTime)) - CI has no signed-in desktop" }
+  Update-AutoCleanCard; Note "    card: $($ac.Last.Text)"
+}
+Step "Schedule: turn off removes the task" {
+  Show-AutoCleanDialog; $script:AcUI.On.Checked = $false; Save-AutoCleanDialog
+  if (Get-AutoCleanTask) { throw "task still exists" }
+  Note "    card: $($ac.Status.Text)"
+  if ($ac.Status.Text -notmatch '^Off') { throw "card should say Off" }
+}
+
 Step "Updates: check" { Check-Update $false; Note "    $($upd.Status.Text)" }
 Shot "updates"
 

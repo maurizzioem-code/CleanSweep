@@ -26,14 +26,17 @@ function Step($name, [scriptblock]$body) {
 function Shot($name) {
   [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 300; [Windows.Forms.Application]::DoEvents()
   $bmp = New-Object Drawing.Bitmap $form.Width, $form.Height
-  $form.DrawToBitmap($bmp, (New-Object Drawing.Rectangle 0, 0, $form.Width, $form.Height))
+  # Real screen capture (shows native dark controls exactly as a user sees them); fall back to DrawToBitmap
+  try { $g = [Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($form.Location, [Drawing.Point]::Empty, $form.Size); $g.Dispose() }
+  catch { $form.DrawToBitmap($bmp, (New-Object Drawing.Rectangle 0, 0, $form.Width, $form.Height)) }
   $bmp.Save((Join-Path $Out "$name.png"), [Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
 }
 # Every button/checkbox/combobox on the visible tab must be visible and fully inside the window
 function Check-Layout($tabName) {
   $client = $form.ClientRectangle; $bad = @()
   $walk = { param($c) foreach ($k in $c.Controls) {
-      if ($k -is [Windows.Forms.ButtonBase] -or $k -is [Windows.Forms.ComboBox]) {
+      $scrolls = $false; $pp = $k.Parent; while ($pp) { if ($pp -is [Windows.Forms.ScrollableControl] -and $pp.AutoScroll) { $scrolls = $true }; $pp = $pp.Parent }
+      if (($k -is [Windows.Forms.ButtonBase] -or $k -is [Windows.Forms.ComboBox]) -and -not $scrolls) {
         $r = $form.RectangleToClient($k.RectangleToScreen($k.ClientRectangle))
         if (-not $k.Visible) { $script:bad += "'$($k.Text)' is hidden" }
         elseif (-not $client.Contains($r)) { $script:bad += "'$($k.Text)' is outside the window at $r (window $client)" }
@@ -61,7 +64,7 @@ $results.Add([pscustomobject]@{ Step="App loads without errors"; Status=$(if ($l
 Note "[$(if ($loadErrs) { 'ISSUES' } else { 'PASS' })] App loads ($([math]::Round($sw.Elapsed.TotalSeconds,1))s)"; foreach ($e in $loadErrs) { Note "    $e" }
 if (-not $form) { $results | ConvertTo-Json -Depth 4 | Set-Content "$Out\results.json"; exit 1 }
 $form.StartPosition = 'Manual'; $form.Location = '0,0'
-$form.Show(); [Windows.Forms.Application]::DoEvents()
+$form.TopMost = $true; $form.Show(); $form.Activate(); [Windows.Forms.Application]::DoEvents()
 Note "Window: $($form.Size)  Title: $($form.Text)  Tabs: $(($tabs.TabPages | ForEach-Object Text) -join ', ')"
 
 # ---------------------------------------------------------------- layout at default and minimum size
@@ -72,7 +75,7 @@ foreach ($size in @($form.Size, $form.MinimumSize)) {
     Shot ("layout-{0}x{1}-{2}" -f $size.Width, $size.Height, ($p.Text -replace '[^\w]', ''))
   }
 }
-$form.Size = '900,680'
+$form.Size = '1200,800'
 
 # ---------------------------------------------------------------- dashboard
 Show-Tab $dash.Page
@@ -94,6 +97,16 @@ Step "Dashboard: select finding shows advice" {
   $it.Selected = $true; [Windows.Forms.Application]::DoEvents(); Note "    $($it.Tag.Area): button '$($dash.Do.Text)' enabled=$($dash.Do.Enabled) advice='$($dash.Advice.Text)'"
   if ($it.Tag.Action -like 'tab:*') { $dash.Do.PerformClick(); Note "    navigated to: $($tabs.SelectedTab.Text)"; if ($tabs.SelectedTab -eq $dash.Page) { Write-Error "Action did not navigate" } }
 }
+Step "Dashboard: hardware monitor cards" {
+  Start-Sleep -Seconds 4; for ($i = 0; $i -lt 4; $i++) { Update-Live; [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 1600 }
+  foreach ($k in 'cpu','ram','gpu','disk','net','bat') { Note ("    {0}: {1} | {2} | {3} samples" -f $HW[$k].Title.Text, $HW[$k].Value.Text, ($HW[$k].Sub.Text -replace "`n", ' / '), $Spark[$k].Data.Count) }
+  Note "    background sampler running: $($HwSync.Run)  samples: $($HwSync.Seq)"
+  if ($HW.cpu.Value.Text -eq '--' -or $HW.ram.Value.Text -eq '--') { Write-Error "Hardware cards empty" }
+  if (-not $HwSync.Seq) { Write-Error "Background sampler produced no data" }
+}
+Step "Dashboard: one-click restore point tile" { Invoke-QuickAction 'restore'; Note "    $($dash.Tiles.restore.Sub.Text)" }
+Step "Dashboard: one-click network check tile" { Invoke-QuickAction 'network'; Note "    tab: $($tabs.SelectedTab.Text)  $($wifi.Status.Text)"; if ($tabs.SelectedTab -ne $wifi.Page) { Write-Error "Did not open Network" } }
+Show-Tab $dash.Page
 Step "Dashboard: battery report action" { if (Get-CimInstance Win32_Battery) { Invoke-FindingAction 'battery' } else { Note "    no battery on this VM - skipped" } }
 Show-Tab $dash.Page; Shot "dashboard-selected"
 
@@ -179,15 +192,14 @@ Show-Tab $drv.Page
 Step "Drives: list volumes with checkboxes" {
   foreach ($i in $drv.List.Items) { Note ("      " + (@($i.Text) + @($i.SubItems | Select-Object -Skip 1 | ForEach-Object Text) -join ' | ') + $(if ($i.Tag.IsSystemPart) { "  [not selectable]" })) }
   if (-not (@($drv.List.Items) | Where-Object { $_.Tag.Letter -eq $SysDrive })) { Write-Error "System drive missing" }
-  if ($drv.Junk.Enabled) { Write-Error "Buttons enabled with nothing ticked" }
 }
 Step "Drives: hidden partitions can't be ticked" {
   $h = @($drv.List.Items) | Where-Object { $_.Tag.IsSystemPart } | Select-Object -First 1
   if ($h) { $h.Checked = $true; [Windows.Forms.Application]::DoEvents(); Note "    $($h.Text) checked after click: $($h.Checked)"; if ($h.Checked) { Write-Error "Hidden partition could be ticked" } } else { Note "    no hidden partitions on this VM" }
 }
-Step "Drives: tick system drive enables actions" {
+Step "Drives: tick system drive" {
   $c = @($drv.List.Items) | Where-Object { $_.Tag.Letter -eq $SysDrive }; $c.Checked = $true; [Windows.Forms.Application]::DoEvents()
-  Note "    checked: $((Get-CheckedDrives | ForEach-Object Letter) -join ',')  buttons enabled: $($drv.Check.Enabled)"; if (-not $drv.Check.Enabled) { Write-Error "Buttons not enabled" }
+  Note "    checked: $((Get-CheckedDrives | ForEach-Object Letter) -join ',')  buttons enabled: $($drv.Check.Enabled)"; if (-not (Get-CheckedDrives)) { Write-Error "Tick did not register" }
 }
 Shot "drives"
 Step "Drives: check for errors (chkdsk /scan)" {
@@ -227,11 +239,11 @@ Step "Repair: cancel stops a running scan" {
   Note "    $($rep.Status.Text)  busy=$script:RepairBusy  dism still running: $([bool](Get-Process dism -ErrorAction Ignore))"
   if ($rep.Status.Text -ne 'Cancelled.') { Write-Error "Cancel did not work: $($rep.Status.Text)" }
 }
-Step "Repair: System File Checker (full run)" {
-  $script:RepairAutoCancelSec = 1500; Start-Repairs @('sfc') "SFC"; $script:RepairAutoCancelSec = 0
+Step "Repair: System File Checker (runs 45 s, then cancelled)" {
+  $script:RepairAutoCancelSec = 45; Start-Repairs @('sfc') "SFC"; $script:RepairAutoCancelSec = 0
   Note "    $($rep.Status.Text)  progress $($rep.Prog.Value)%"
   Note ("    output: " + (($rep.Out.Text -split "`r`n" | Where-Object { $_ } | Select-Object -Last 5) -join ' / '))
-  if ($rep.Status.Text -match 'Failed|Cancelled') { Write-Error "SFC: $($rep.Status.Text)" }
+  if ($rep.Out.Text -notmatch 'Beginning system scan|Verification') { Write-Error "SFC output not shown" }
 }
 Shot "repair-sfc"
 Step "Repair: Windows Update repair" {

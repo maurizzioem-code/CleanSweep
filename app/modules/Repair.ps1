@@ -38,7 +38,7 @@ $rep.List = New-Object Windows.Forms.ListView -Property @{View='Details'; FullRo
 foreach ($c in @(@("Tool",260), @("Time",80), @("Last result",420))) { [void]$rep.List.Columns.Add($c[0], $c[1]) }
 $rep.Info = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=44; Padding='2,4,2,0'; ForeColor='DimGray'; Text="DISM repairs Windows' own store of system files; System File Checker then uses it to fix your installed files."}
 $rep.Prog = New-Object Windows.Forms.ProgressBar -Property @{Dock='Top'; Height=18; Minimum=0; Maximum=100}
-$rep.Out  = New-Object Windows.Forms.TextBox -Property @{Dock='Fill'; Multiline=$true; ReadOnly=$true; ScrollBars='Vertical'; WordWrap=$true; Font=New-Object Drawing.Font("Consolas",9); BackColor='White'}
+$rep.Out  = New-Object Windows.Forms.TextBox -Property @{Dock='Fill'; Multiline=$true; ReadOnly=$true; ScrollBars='Vertical'; WordWrap=$true; Font=New-Object Drawing.Font("Consolas",9)}
 $rep.Opt  = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Bottom'; AutoSize=$true; AutoSizeMode='GrowAndShrink'; Padding='0,4,0,0'}
 $rep.Rp   = New-Object Windows.Forms.CheckBox -Property @{Text="Create a System Restore point before repairs (recommended)"; AutoSize=$true; Checked=$true}
 $rep.Opt.Controls.Add($rep.Rp)

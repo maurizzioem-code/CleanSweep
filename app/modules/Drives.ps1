@@ -8,14 +8,14 @@ $drv.Status = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=36; 
 $drv.List   = New-Object Windows.Forms.ListView -Property @{View='Details'; CheckBoxes=$true; FullRowSelect=$true; Dock='Fill'; HideSelection=$false}
 foreach ($c in @(@("Volume",190), @("Drive type",120), @("File system",85), @("Status",80), @("Capacity",90), @("Free space",90), @("% Free",60), @("Disk",170))) { [void]$drv.List.Columns.Add($c[0], $c[1]) }
 $drv.Prog   = New-Object Windows.Forms.ProgressBar -Property @{Dock='Bottom'; Height=16; Minimum=0; Maximum=100}
-$drv.Out    = New-Object Windows.Forms.TextBox -Property @{Dock='Bottom'; Height=120; Multiline=$true; ReadOnly=$true; ScrollBars='Vertical'; Font=New-Object Drawing.Font("Consolas",9); BackColor='White'}
+$drv.Out    = New-Object Windows.Forms.TextBox -Property @{Dock='Bottom'; Height=120; Multiline=$true; ReadOnly=$true; ScrollBars='Vertical'; Font=New-Object Drawing.Font("Consolas",9); }
 $drv.Bar    = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Bottom'; AutoSize=$true; AutoSizeMode='GrowAndShrink'; WrapContents=$true; Padding='0,6,0,0'}
 $bp = @{AutoSize=$true; MinimumSize='110,36'; Margin='0,0,8,6'}
-$drv.Junk   = New-Object Windows.Forms.Button -Property ($bp + @{Text="Clean junk"; Enabled=$false})
-$drv.Large  = New-Object Windows.Forms.Button -Property ($bp + @{Text="Find large files"; Enabled=$false})
-$drv.Check  = New-Object Windows.Forms.Button -Property ($bp + @{Text="Check for errors"; Enabled=$false})
-$drv.Opt    = New-Object Windows.Forms.Button -Property ($bp + @{Text="Optimize"; Enabled=$false})
-$drv.Stop   = New-Object Windows.Forms.Button -Property ($bp + @{Text="Cancel"; Enabled=$false})
+$drv.Junk   = New-Object Windows.Forms.Button -Property ($bp + @{Text="Clean junk"; })
+$drv.Large  = New-Object Windows.Forms.Button -Property ($bp + @{Text="Find large files"; })
+$drv.Check  = New-Object Windows.Forms.Button -Property ($bp + @{Text="Check for errors"; })
+$drv.Opt    = New-Object Windows.Forms.Button -Property ($bp + @{Text="Optimize"; })
+$drv.Stop   = New-Object Windows.Forms.Button -Property ($bp + @{Text="Cancel"; })
 $drv.Refresh= New-Object Windows.Forms.Button -Property ($bp + @{Text="Refresh"})
 $drv.DiskMgmt = New-Object Windows.Forms.Button -Property ($bp + @{Text="Disk Management"})
 $drv.Bar.Controls.AddRange(@($drv.Junk, $drv.Large, $drv.Check, $drv.Opt, $drv.Stop, $drv.Refresh, $drv.DiskMgmt))
@@ -82,8 +82,9 @@ $drv.List.Add_ItemCheck({ param($s, $e) if (-not $script:DrvLoading -and $drv.Li
 $drv.List.Add_ItemChecked({ if (-not $script:DrvLoading) { Update-DriveButtons } })
 function Get-CheckedDrives { @($drv.List.CheckedItems | ForEach-Object { $_.Tag } | Where-Object Letter) }
 function Update-DriveButtons {
-  $n = (Get-CheckedDrives).Count; $idle = -not $script:RepairBusy
-  foreach ($b in $drv.Junk, $drv.Large, $drv.Check, $drv.Opt) { $b.Enabled = $idle -and $n -gt 0 }
+  # Actions stay clickable while idle; with nothing ticked they explain what to do
+  $idle = -not $script:RepairBusy
+  foreach ($b in $drv.Junk, $drv.Large, $drv.Check, $drv.Opt) { $b.Enabled = $idle }
 }
 function Set-DriveBusy([bool]$b) {
   $script:RepairBusy = $b; $drv.Stop.Enabled = $b; $drv.List.Enabled = -not $b; $drv.Refresh.Enabled = -not $b
@@ -91,14 +92,17 @@ function Set-DriveBusy([bool]$b) {
 }
 
 # ---------------------------------------------------------------- actions
+function Test-DrivesTicked { if (Get-CheckedDrives) { return $true }; [void][CSMsg]::Show("Tick at least one drive first.","CleanSweep","OK","Information"); return $false }
 $drv.Junk.Add_Click({
+  if (-not (Test-DrivesTicked)) { return }
   $want = @(Get-CheckedDrives | ForEach-Object Letter)
   Load-Drives; foreach ($cb in $script:DriveChecks) { $cb.Checked = $want -contains $cb.Tag }
   $tabs.SelectedTab = $junk.Page; [Windows.Forms.Application]::DoEvents(); $junk.Scan.PerformClick()
 })
 
 function Invoke-DriveTool($kind) {
-  $drives = Get-CheckedDrives; if (-not $drives) { return }
+  if (-not (Test-DrivesTicked)) { return }
+  $drives = Get-CheckedDrives
   if (-not (Test-IsAdmin)) { [void][CSMsg]::Show("This needs administrator rights. Open CleanSweep from its Desktop shortcut and try again.","CleanSweep","OK","Warning"); return }
   $drv.Out.Clear(); $script:RepairCancel = $false; $script:ToolUI = $drv.UI; Set-DriveBusy $true; $summary = @()
   try {
@@ -176,15 +180,17 @@ function Show-LargeFiles($files, $letters) {
   }
   $bar = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Bottom'; AutoSize=$true; AutoSizeMode='GrowAndShrink'; Padding='6,6,6,6'}
   $open = New-Object Windows.Forms.Button -Property ($bp + @{Text="Open file location"})
-  $del  = New-Object Windows.Forms.Button -Property ($bp + @{Text="Move ticked to Recycle Bin"; Enabled=$false})
+  $del  = New-Object Windows.Forms.Button -Property ($bp + @{Text="Move ticked to Recycle Bin"; })
   $close= New-Object Windows.Forms.Button -Property ($bp + @{Text="Close"; DialogResult='Cancel'})
   $bar.Controls.AddRange(@($open, $del, $close)); $f.CancelButton = $close
   $f.Controls.Add($lv); $f.Controls.Add($bar); $f.Controls.Add($top)
-  $lv.Add_ItemChecked({ $del.Enabled = $lv.CheckedItems.Count -gt 0 }.GetNewClosure())
-  $open.Add_Click({ $s = if ($lv.SelectedItems.Count) { $lv.SelectedItems[0] } elseif ($lv.CheckedItems.Count) { $lv.CheckedItems[0] } else { $null }
-    if ($s) { Start-Process explorer.exe "/select,`"$($s.Tag.Path)`"" } }.GetNewClosure())
-  $lv.Add_DoubleClick({ if ($lv.SelectedItems.Count) { Start-Process explorer.exe "/select,`"$($lv.SelectedItems[0].Tag.Path)`"" } }.GetNewClosure())
+  $script:LF = @{ Lv=$lv; Del=$del; Top=$top }
+  $lv.Add_ItemChecked({ $script:LF.Del.Enabled = $script:LF.Lv.CheckedItems.Count -gt 0 })
+  $open.Add_Click({ $lv = $script:LF.Lv; $s = if ($lv.SelectedItems.Count) { $lv.SelectedItems[0] } elseif ($lv.CheckedItems.Count) { $lv.CheckedItems[0] } else { $null }
+    if ($s) { Start-Process explorer.exe "/select,`"$($s.Tag.Path)`"" } })
+  $lv.Add_DoubleClick({ $lv = $script:LF.Lv; if ($lv.SelectedItems.Count) { Start-Process explorer.exe "/select,`"$($lv.SelectedItems[0].Tag.Path)`"" } })
   $del.Add_Click({
+    $lv = $script:LF.Lv; $top = $script:LF.Top
     $items = @($lv.CheckedItems); $sum = ($items | ForEach-Object { $_.Tag.Size } | Measure-Object -Sum).Sum
     if ([CSMsg]::Show("Move $($items.Count) file(s) ($(Fmt $sum)) to the Recycle Bin?`n`nYou can restore them from the Recycle Bin. Space is freed when the Recycle Bin is emptied (Junk Files tab).","CleanSweep","YesNo","Question") -ne 'Yes') { return }
     Add-Type -AssemblyName Microsoft.VisualBasic; $ok = 0
@@ -193,11 +199,12 @@ function Show-LargeFiles($files, $letters) {
       catch { [void][CSMsg]::Show("Could not move $($it.Tag.Name): $($_.Exception.Message)","CleanSweep","OK","Warning") }
     }
     $top.Text = "Moved $ok file(s) to the Recycle Bin. Empty it from the Junk Files tab to free the space."
-  }.GetNewClosure())
+  })
   if (-not $TestMode) { [void]$f.ShowDialog($form) }
   return $f
 }
 $drv.Large.Add_Click({
+  if (-not (Test-DrivesTicked)) { return }
   $letters = @(Get-CheckedDrives | ForEach-Object Letter); $script:RepairCancel = $false; $drv.Out.Clear()
   Set-DriveBusy $true
   try { $files = Find-LargeFiles $letters } finally { Set-DriveBusy $false }

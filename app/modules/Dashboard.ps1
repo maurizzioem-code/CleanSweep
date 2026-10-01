@@ -166,7 +166,6 @@ function Get-HealthScore($rows) {
   [math]::Max(0, 100 - 15 * $p - 5 * $w)
 }
 function Get-Grade($s) { if ($s -ge 90) { "Excellent" } elseif ($s -ge 75) { "Good" } elseif ($s -ge 50) { "Fair" } else { "Needs attention" } }
-function Get-GradeColor($s) { if ($s -ge 90) { 'ForestGreen' } elseif ($s -ge 75) { 'SeaGreen' } elseif ($s -ge 50) { 'DarkOrange' } else { 'Firebrick' } }
 
 function Invoke-HealthCheck {
   $rows = New-Object System.Collections.Generic.List[object]
@@ -190,83 +189,184 @@ function Save-History($score, $rows) {
 }
 function Get-History { if (Test-Path $HistoryFile) { @(Import-Csv -LiteralPath $HistoryFile -ErrorAction Ignore) } else { @() } }
 
-# ---------------------------------------------------------------- UI
+# ---------------------------------------------------------------- UI (Windows 11 style dark dashboard)
 $dash = @{}
-$dash.Page = New-Object Windows.Forms.TabPage -Property @{Text="Dashboard"; Padding='10,10,10,10'}
-
-# Top: score on the left, live stats and charts on the right
-$dash.Top = New-Object Windows.Forms.TableLayoutPanel -Property @{Dock='Top'; Height=150; ColumnCount=2; RowCount=1}
-[void]$dash.Top.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Absolute', 210))
-[void]$dash.Top.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Percent', 100))
-$scoreBox = New-Object Windows.Forms.Panel -Property @{Dock='Fill'}
-$dash.Score = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=74; Text="--"; TextAlign='MiddleCenter'; Font=New-Object Drawing.Font("Segoe UI",36,[Drawing.FontStyle]::Bold); ForeColor='DimGray'}
-$dash.Grade = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=28; Text="Health score"; TextAlign='MiddleCenter'; Font=New-Object Drawing.Font("Segoe UI",12,[Drawing.FontStyle]::Bold)}
-$dash.Trend = New-Object Windows.Forms.Label -Property @{Dock='Fill'; Text=""; TextAlign='TopCenter'; ForeColor='DimGray'}
-$scoreBox.Controls.AddRange(@($dash.Trend, $dash.Grade, $dash.Score))
-
-$right = New-Object Windows.Forms.TableLayoutPanel -Property @{Dock='Fill'; ColumnCount=3; RowCount=2}
-foreach ($i in 1..3) { [void]$right.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Percent', 33.3)) }
-[void]$right.RowStyles.Add((New-Object Windows.Forms.RowStyle 'Absolute', 24)); [void]$right.RowStyles.Add((New-Object Windows.Forms.RowStyle 'Percent', 100))
-$dash.CpuL = New-Object Windows.Forms.Label -Property @{Dock='Fill'; Text="CPU"; TextAlign='MiddleLeft'}
-$dash.RamL = New-Object Windows.Forms.Label -Property @{Dock='Fill'; Text="Memory"; TextAlign='MiddleLeft'}
-$dash.HisL = New-Object Windows.Forms.Label -Property @{Dock='Fill'; Text="Score history"; TextAlign='MiddleLeft'}
-$right.Controls.Add($dash.CpuL, 0, 0); $right.Controls.Add($dash.RamL, 1, 0); $right.Controls.Add($dash.HisL, 2, 0)
-
-# Small line charts (falls back to text only if the chart library is unavailable)
-$script:HaveCharts = $true
-try { Add-Type -AssemblyName System.Windows.Forms.DataVisualization -ErrorAction Stop } catch { $script:HaveCharts = $false }
-function New-MiniChart($color, $max) {
-  if (-not $script:HaveCharts) { return (New-Object Windows.Forms.Label -Property @{Dock='Fill'}) }
-  $c = New-Object System.Windows.Forms.DataVisualization.Charting.Chart -Property @{Dock='Fill'; BackColor='Transparent'}
-  $a = New-Object System.Windows.Forms.DataVisualization.Charting.ChartArea; $a.BackColor = 'White'
-  $a.AxisY.Minimum = 0; $a.AxisY.Maximum = $max; $a.AxisX.LabelStyle.Enabled = $false; $a.AxisX.MajorGrid.Enabled = $false
-  $a.AxisY.MajorGrid.LineColor = 'Gainsboro'; $a.AxisY.LabelStyle.Font = New-Object Drawing.Font("Segoe UI",7); $a.AxisX.MajorTickMark.Enabled = $false
-  $a.Position.Auto = $true; [void]$c.ChartAreas.Add($a)
-  $s = New-Object System.Windows.Forms.DataVisualization.Charting.Series; $s.ChartType = 'Line'; $s.BorderWidth = 2; $s.Color = $color
-  [void]$c.Series.Add($s); $c
+$dash.Page = New-Object Windows.Forms.TabPage -Property @{Text="Dashboard"}
+$scroll = New-Object Windows.Forms.Panel -Property @{Dock='Fill'; AutoScroll=$true; Padding='0,0,8,0'}
+$dash.Page.Controls.Add($scroll)
+$StatusColor = @{ Problem=$Theme.Bad; Warning=$Theme.Warn; OK=$Theme.Ok; Info=$Theme.Info }
+$StatusOrder = @{ Problem=0; Warning=1; Info=2; OK=3 }
+function New-Lbl($text, $font, $color, $dock = 'Top', $h = 0) {
+  $l = New-Object Windows.Forms.Label -Property @{Text=$text; Font=$font; ForeColor=$color; Dock=$dock; AutoEllipsis=$true; BackColor=[Drawing.Color]::Transparent}
+  if ($h) { $l.Height = $h } else { $l.AutoSize = $false; $l.Height = [int]($font.GetHeight() + 6) }
+  $l
 }
-$dash.CpuC = New-MiniChart 'SteelBlue' 100; $dash.RamC = New-MiniChart 'MediumPurple' 100; $dash.HisC = New-MiniChart 'SeaGreen' 100
-$right.Controls.Add($dash.CpuC, 0, 1); $right.Controls.Add($dash.RamC, 1, 1); $right.Controls.Add($dash.HisC, 2, 1)
-$dash.Top.Controls.Add($scoreBox, 0, 0); $dash.Top.Controls.Add($right, 1, 0)
+function Add-Rows($parent, $rows) { for ($i = $rows.Count - 1; $i -ge 0; $i--) { $parent.Controls.Add($rows[$i]) } }   # Dock=Top stacks in reverse
+function Spacer($h = 12) { New-Object Windows.Forms.Panel -Property @{Dock='Top'; Height=$h} }
 
-$dash.Status = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=30; TextAlign='MiddleLeft'; Text="Click Run health check."; Font=New-Object Drawing.Font("Segoe UI",11,[Drawing.FontStyle]::Bold)}
-$dash.List = New-Object Windows.Forms.ListView -Property @{View='Details'; FullRowSelect=$true; Dock='Fill'; HideSelection=$false}
-foreach ($c in @(@("Status",85), @("Area",120), @("Finding",380), @("Suggested action",170))) { [void]$dash.List.Columns.Add($c[0], $c[1]) }
-$dash.Advice = New-Object Windows.Forms.Label -Property @{Dock='Bottom'; Height=52; Padding='2,6,2,2'; Text="Select a finding to see what to do."; ForeColor='DimGray'}
-$dash.Bar = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Bottom'; AutoSize=$true; AutoSizeMode='GrowAndShrink'; WrapContents=$true; Padding='0,6,0,0'}
-$bp = @{AutoSize=$true; MinimumSize='120,36'; Margin='0,0,8,0'}
-$dash.Run = New-Object Windows.Forms.Button -Property ($bp + @{Text="Run health check"})
-$dash.Do  = New-Object Windows.Forms.Button -Property ($bp + @{Text="Do suggested action"; Enabled=$false})
-$dash.Rep = New-Object Windows.Forms.Button -Property ($bp + @{Text="Save report..."; Enabled=$false})
-$dash.Bar.Controls.AddRange(@($dash.Run, $dash.Do, $dash.Rep))
-$dash.Page.Controls.Add($dash.List); $dash.Page.Controls.Add($dash.Advice); $dash.Page.Controls.Add($dash.Bar); $dash.Page.Controls.Add($dash.Status); $dash.Page.Controls.Add($dash.Top)
-# TabPages.Insert is ignored before the control has a window handle, so rebuild the order instead
+# ---- header
+$hello = if ((Get-Date).Hour -lt 12) { "Good morning" } elseif ((Get-Date).Hour -lt 18) { "Good afternoon" } else { "Good evening" }
+$osInfo = try { $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction Stop; $cap = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).Caption -replace '^Microsoft ', ''; "$cap $($cv.DisplayVersion)" } catch { "Windows" }
+$model = try { $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop; ("$($cs.Manufacturer) $($cs.Model)" -replace 'System manufacturer System Product Name', 'PC').Trim() } catch { "" }
+$hdr = New-Object Windows.Forms.Panel -Property @{Dock='Top'; Height=64}
+$hdrT = New-Lbl $hello (DisplayFont 20 'Bold') $Theme.Text 'Top' 38
+$hdrS = New-Lbl ("$env:COMPUTERNAME  {0}  $model  {0}  $osInfo" -f [char]0xB7) (UiFont 9.5) $Theme.Sub 'Top' 22
+Add-Rows $hdr @($hdrT, $hdrS)
+
+# ---- row 1: health score card + one-click actions card
+$row1 = New-Object Windows.Forms.TableLayoutPanel -Property @{Dock='Top'; Height=250; ColumnCount=2; RowCount=1; Margin='0'; Padding='0'}
+[void]$row1.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Absolute', 400)); [void]$row1.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Percent', 100))
+[void]$row1.RowStyles.Add((New-Object Windows.Forms.RowStyle 'Percent', 100))
+
+$health = New-Card
+$dash.Score = New-Object Windows.Forms.Label -Property @{Text="--"}   # value holder (the gauge paints it)
+$dash.Gauge = New-Object Windows.Forms.Panel -Property @{Dock='Left'; Width=180}
+Set-DoubleBuffered $dash.Gauge
+$GaugeFonts = @{ Num=(DisplayFont 34 'Bold'); Small=(UiFont 9) }
+$dash.Gauge.Add_Paint({ param($s, $e)
+  $g = $e.Graphics; $g.SmoothingMode = 'AntiAlias'; $g.TextRenderingHint = 'AntiAliasGridFit'
+  $sz = [math]::Min($s.Width, $s.Height) - 24; $r = New-Object Drawing.RectangleF 10, (($s.Height - $sz) / 2), $sz, $sz
+  $pen = New-Object Drawing.Pen (C '#3A3A3A'), 12; $pen.StartCap = 'Round'; $pen.EndCap = 'Round'; $g.DrawArc($pen, $r, 135, 270); $pen.Dispose()
+  $v = 0; $has = [int]::TryParse($dash.Score.Text, [ref]$v)
+  if ($has -and $v -gt 0) { $col = Get-GradeColor $v; $pen = New-Object Drawing.Pen $col, 12; $pen.StartCap = 'Round'; $pen.EndCap = 'Round'; $g.DrawArc($pen, $r, 135, [float](270 * $v / 100)); $pen.Dispose() }
+  $txt = if ($has) { "$v" } else { "--" }
+  $fmt = New-Object Drawing.StringFormat; $fmt.Alignment = 'Center'; $fmt.LineAlignment = 'Center'
+  $b = New-Object Drawing.SolidBrush $Theme.Text; $g.DrawString($txt, $GaugeFonts.Num, $b, (New-Object Drawing.RectangleF $r.X, ($r.Y - 6), $r.Width, $r.Height), $fmt); $b.Dispose()
+  $b = New-Object Drawing.SolidBrush $Theme.Sub; $g.DrawString("HEALTH SCORE", $GaugeFonts.Small, $b, (New-Object Drawing.RectangleF $r.X, ($r.Y + $r.Height * 0.30), $r.Width, $r.Height), $fmt); $b.Dispose()
+})
+$hInfo = New-Object Windows.Forms.Panel -Property @{Dock='Fill'; Padding='12,18,0,0'}
+$dash.Grade  = New-Lbl "Not checked yet" (DisplayFont 16 'Bold') $Theme.Text 'Top' 34
+$dash.Trend  = New-Lbl "" (UiFont 9.5) $Theme.Sub 'Top' 22
+$dash.Status = New-Lbl "Run a health check to see your score." (UiFont 9.5) $Theme.Sub 'Top' 62
+$dash.Status.AutoEllipsis = $false
+$hBtns = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Bottom'; Height=44; WrapContents=$false}
+$dash.Run = New-Object Windows.Forms.Button -Property @{Text="Run health check"; AutoSize=$true; MinimumSize='150,34'; Margin='0,0,8,0'}
+$dash.Rep = New-Object Windows.Forms.Button -Property @{Text="Save report"; AutoSize=$true; MinimumSize='100,34'; Margin='0'; Enabled=$false}
+Set-Primary $dash.Run
+$hBtns.Controls.AddRange(@($dash.Run, $dash.Rep))
+$hInfo.Controls.Add($hBtns); Add-Rows $hInfo @($dash.Grade, $dash.Trend, $dash.Status)
+$health.Controls.Add($hInfo); $health.Controls.Add($dash.Gauge)
+
+# One-click action tiles
+$acts = New-Card
+$actsT = New-Lbl "One-click actions" (UiFont 11 'Bold') $Theme.Text 'Top' 28
+$grid = New-Object Windows.Forms.TableLayoutPanel -Property @{Dock='Fill'; ColumnCount=3; RowCount=2; Padding='0,4,0,0'}
+foreach ($i in 1..3) { [void]$grid.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Percent', 33.33)) }
+foreach ($i in 1..2) { [void]$grid.RowStyles.Add((New-Object Windows.Forms.RowStyle 'Percent', 50)) }
+$dash.Tiles = @{}; $script:TileOf = @{}
+function New-Tile($key, $glyph, $title, $sub) {
+  $t = New-Object Windows.Forms.Panel -Property @{Dock='Fill'; BackColor=$Theme.Tile; Margin='0,0,8,8'; Cursor='Hand'; Padding='12,10,8,6'}
+  Set-Rounded $t 6
+  $ic = New-Lbl ([string]$glyph) (IconFont 16) $Theme.Accent 'Left' 0; $ic.Width = 34; $ic.TextAlign = 'MiddleLeft'
+  $txt = New-Object Windows.Forms.Panel -Property @{Dock='Fill'; BackColor=[Drawing.Color]::Transparent}
+  $tt = New-Lbl $title (UiFont 10 'Bold') $Theme.Text 'Top' 22
+  $ts = New-Lbl $sub (UiFont 8.5) $Theme.Sub 'Fill' 0
+  $txt.Controls.Add($ts); $txt.Controls.Add($tt)
+  $t.Controls.Add($txt); $t.Controls.Add($ic)
+  foreach ($c in @($t, $ic, $txt, $tt, $ts)) {
+    $c.Cursor = 'Hand'; $script:TileOf[$c] = @{ Key=$key; Tile=$t }
+    $c.Add_Click({ param($s, $e) Invoke-QuickAction $script:TileOf[$s].Key })
+    $c.Add_MouseEnter({ param($s, $e) $script:TileOf[$s].Tile.BackColor = $Theme.TileHover })
+    $c.Add_MouseLeave({ param($s, $e) $t = $script:TileOf[$s].Tile; if (-not $t.ClientRectangle.Contains($t.PointToClient([Windows.Forms.Cursor]::Position))) { $t.BackColor = $Theme.Tile } })
+  }
+  $dash.Tiles[$key] = @{ Panel=$t; Sub=$ts; Default=$sub }
+  $t
+}
+$grid.Controls.Add((New-Tile 'clean'   $Glyph.Clean   "Quick clean"     "Scan and remove junk on $SysDrive"), 0, 0)
+$grid.Controls.Add((New-Tile 'space'   $Glyph.Space   "Free up space"   "Find large files on $SysDrive"), 1, 0)
+$grid.Controls.Add((New-Tile 'repair'  $Glyph.Repair  "Repair Windows"  "DISM + System File Checker"), 2, 0)
+$grid.Controls.Add((New-Tile 'optimize' $Glyph.Speed  "Optimize drives" "TRIM SSDs, defragment HDDs"), 0, 1)
+$grid.Controls.Add((New-Tile 'network' $Glyph.Net     "Network check"   "Test speed, latency and DNS"), 1, 1)
+$grid.Controls.Add((New-Tile 'restore' $Glyph.Restore "Restore point"   "Create a safety snapshot"), 2, 1)
+$acts.Controls.Add($grid); $acts.Controls.Add($actsT)
+$row1.Controls.Add($health, 0, 0); $row1.Controls.Add($acts, 1, 0)
+
+# ---- row 2: hardware monitoring cards (3 x 2)
+$hwT = New-Lbl "Hardware monitor" (UiFont 11 'Bold') $Theme.Text 'Top' 30
+$row2 = New-Object Windows.Forms.TableLayoutPanel -Property @{Dock='Top'; Height=356; ColumnCount=3; RowCount=2}
+foreach ($i in 1..3) { [void]$row2.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Percent', 33.33)) }
+foreach ($i in 1..2) { [void]$row2.RowStyles.Add((New-Object Windows.Forms.RowStyle 'Percent', 50)) }
+$Spark = @{}
+function New-Spark($key, $color, [double]$max) {
+  $p = New-Object Windows.Forms.Panel -Property @{Dock='Fill'; BackColor=[Drawing.Color]::Transparent}
+  Set-DoubleBuffered $p
+  $Spark[$key] = @{ Data=(New-Object System.Collections.Generic.List[double]); Max=$max; Color=$color; Panel=$p }; $p.Tag = $key
+  $p.Add_Paint({ param($s, $e) Paint-Spark $s $e })
+  $p
+}
+function Paint-Spark($s, $e) {
+    $sp = $Spark[$s.Tag]; $d = $sp.Data; $g = $e.Graphics; $g.SmoothingMode = 'AntiAlias'
+    $w = $s.Width; $h = $s.Height - 2; if ($w -lt 10 -or $h -lt 10) { return }
+    $gp = New-Object Drawing.Pen (C '#363636'), 1; $g.DrawLine($gp, 0, $h, $w, $h); $g.DrawLine($gp, 0, [int]($h / 2), $w, [int]($h / 2)); $gp.Dispose()
+    if ($d.Count -lt 2) { return }
+    $max = if ($sp.Max -gt 0) { $sp.Max } else { [math]::Max(1, ($d | Measure-Object -Maximum).Maximum * 1.2) }
+    $n = 60; $step = $w / ($n - 1); $off = $n - $d.Count
+    $pts = New-Object 'System.Collections.Generic.List[Drawing.PointF]'
+    for ($i = 0; $i -lt $d.Count; $i++) { $pts.Add((New-Object Drawing.PointF (($off + $i) * $step), ($h - [math]::Min($h, $d[$i] / $max * $h)))) }
+    $area = New-Object Drawing.Drawing2D.GraphicsPath; $area.AddLines($pts.ToArray())
+    $area.AddLine($pts[$pts.Count - 1].X, $h, $pts[0].X, $h); $area.CloseFigure()
+    $fill = New-Object Drawing.SolidBrush ([Drawing.Color]::FromArgb(50, $sp.Color)); $g.FillPath($fill, $area); $fill.Dispose()
+    $pen = New-Object Drawing.Pen $sp.Color, 2; $g.DrawLines($pen, $pts.ToArray()); $pen.Dispose()
+}
+$HW = @{}
+function New-HwCard($key, $glyph, $title, $color, [double]$max) {
+  $c = New-Card 'Fill' '16,12,16,10'
+  $top = New-Object Windows.Forms.Panel -Property @{Dock='Top'; Height=24; BackColor=[Drawing.Color]::Transparent}
+  $ic = New-Lbl ([string]$glyph) (IconFont 11) $color 'Left' 0; $ic.Width = 24; $ic.TextAlign = 'MiddleLeft'
+  $tl = New-Lbl $title (UiFont 9.5 'Bold') $Theme.Sub 'Fill' 0; $tl.TextAlign = 'MiddleLeft'
+  $top.Controls.Add($tl); $top.Controls.Add($ic)
+  $val = New-Lbl "--" (DisplayFont 20 'Bold') $Theme.Text 'Top' 40
+  $sub = New-Lbl "" (UiFont 8.5) $Theme.Sub 'Top' 36; $sub.AutoEllipsis = $true
+  $sp = New-Spark $key $color $max
+  $c.Controls.Add($sp); Add-Rows $c @($top, $val, $sub)
+  $HW[$key] = @{ Value=$val; Sub=$sub; Title=$tl }
+  $c
+}
+$row2.Controls.Add((New-HwCard 'cpu'  $Glyph.Cpu     "Processor" (C '#60CDFF') 100), 0, 0)
+$row2.Controls.Add((New-HwCard 'ram'  $Glyph.Memory  "Memory"    (C '#C3A6FF') 100), 1, 0)
+$row2.Controls.Add((New-HwCard 'gpu'  $Glyph.Gpu     "Graphics"  (C '#FF9EC4') 100), 2, 0)
+$row2.Controls.Add((New-HwCard 'disk' $Glyph.Disk    "Disk"      (C '#FFC66D') 100), 0, 1)
+$row2.Controls.Add((New-HwCard 'net'  $Glyph.Net     "Network"   (C '#6CCB5F') 0), 1, 1)
+$row2.Controls.Add((New-HwCard 'bat'  $Glyph.Battery "Battery and temperatures" (C '#9FE6A0') 100), 2, 1)
+$dash.CpuL = $HW.cpu.Value; $dash.RamL = $HW.ram.Value
+
+# ---- row 3: recommendations
+$recT = New-Lbl "Recommendations" (UiFont 11 'Bold') $Theme.Text 'Top' 30
+$rec = New-Card 'Top' '4,4,4,10'; $rec.Height = 340; $rec.Margin = '0'
+$dash.List = New-Object Windows.Forms.ListView -Property @{View='Details'; FullRowSelect=$true; Dock='Fill'; HideSelection=$false; MultiSelect=$false}
+foreach ($c in @(@("Status",90), @("Area",130), @("Finding",440), @("Suggested action",190))) { [void]$dash.List.Columns.Add($c[0], $c[1]) }
+$recBottom = New-Object Windows.Forms.Panel -Property @{Dock='Bottom'; Height=50; Padding='12,6,12,0'}
+$dash.Do = New-Object Windows.Forms.Button -Property @{Text="Do suggested action"; AutoSize=$true; MinimumSize='170,34'; Dock='Right'; Enabled=$false}
+Set-Primary $dash.Do
+$dash.Advice = New-Lbl "Select a finding to see what to do." (UiFont 9.5) $Theme.Sub 'Fill' 0; $dash.Advice.AutoEllipsis = $false
+$recBottom.Controls.Add($dash.Advice); $recBottom.Controls.Add($dash.Do)
+$rec.Controls.Add($dash.List); $rec.Controls.Add($recBottom)
+$dash.HisL = New-Lbl "" (UiFont 9) $Theme.Sub 'Top' 20
+
+Add-Rows $scroll @($hdr, $row1, (Spacer 8), $hwT, $row2, (Spacer 8), $recT, $rec, (Spacer 12))
 $others = @($tabs.TabPages | ForEach-Object { $_ }); $tabs.TabPages.Clear()
 $tabs.TabPages.Add($dash.Page); foreach ($p in $others) { $tabs.TabPages.Add($p) }
 $tabs.SelectedIndex = 0
 
-$StatusColor = @{ Problem='Firebrick'; Warning='DarkOrange'; OK='ForestGreen'; Info='DimGray' }
-$StatusOrder = @{ Problem=0; Warning=1; Info=2; OK=3 }
-
+# ---------------------------------------------------------------- findings / score display
 function Show-Findings($rows) {
   $dash.List.BeginUpdate(); $dash.List.Items.Clear()
   foreach ($r in ($rows | Sort-Object { $StatusOrder[$_.Status] }, Area)) {
     $it = $dash.List.Items.Add($r.Status); [void]$it.SubItems.Add($r.Area); [void]$it.SubItems.Add($r.Finding); [void]$it.SubItems.Add($r.ActionText)
-    $it.UseItemStyleForSubItems = $false; $it.ForeColor = [Drawing.Color]::FromName($StatusColor[$r.Status]); $it.Font = New-Object Drawing.Font("Segoe UI",10,[Drawing.FontStyle]::Bold)
+    $it.UseItemStyleForSubItems = $false; $it.ForeColor = $StatusColor[$r.Status]; $it.Font = UiFont 10 'Bold'
+    if ($r.ActionText) { $it.SubItems[3].ForeColor = $Theme.Accent }
     $it.Tag = $r
   }
   $dash.List.EndUpdate()
 }
-function Show-Score($score) {
-  $dash.Score.Text = "$score"; $dash.Score.ForeColor = [Drawing.Color]::FromName((Get-GradeColor $score)); $dash.Grade.Text = Get-Grade $score
-}
+function Show-Score($score) { $dash.Score.Text = "$score"; $dash.Grade.Text = Get-Grade $score; $dash.Grade.ForeColor = Get-GradeColor $score; $dash.Gauge.Invalidate() }
+function Get-GradeColor($s) { if ($s -ge 90) { $Theme.Ok } elseif ($s -ge 75) { C '#9BDB4D' } elseif ($s -ge 50) { $Theme.Warn } else { $Theme.Bad } }
 function Show-History {
   $h = Get-History
-  if ($script:HaveCharts) { $s = $dash.HisC.Series[0]; $s.Points.Clear(); foreach ($r in ($h | Select-Object -Last 30)) { [void]$s.Points.AddY([int]$r.Score) }; $s.MarkerStyle = 'Circle'; $s.MarkerSize = 4 }
   if ($h.Count -ge 2) {
     $prev = $h[-2]; $now = $h[-1]; $diff = [int]$now.Score - [int]$prev.Score
     $when = try { ([datetime]$prev.Date).ToString("MMM d") } catch { "last time" }
-    $dash.Trend.Text = "{0} since {1} ({2})" -f $(if ($diff -gt 0) { "Up $diff" } elseif ($diff -lt 0) { "Down $(-$diff)" } else { "No change" }), $when, $prev.Score
+    $dash.Trend.Text = "{0} since {1}  $([char]0xB7)  {2} checks recorded" -f $(if ($diff -gt 0) { "Up $diff" } elseif ($diff -lt 0) { "Down $(-$diff)" } else { "No change" }), $when, $h.Count
   } elseif ($h.Count -eq 1) { $dash.Trend.Text = "First check - history starts now" }
   $dash.HisL.Text = "Score history ($($h.Count) checks)"
 }
@@ -277,10 +377,9 @@ $dash.Run.Add_Click({
   $score = Get-HealthScore $rows; Show-Score $score; Show-Findings $rows
   Save-History $score $rows; Show-History
   $p = @($rows | Where-Object Status -eq 'Problem').Count; $w = @($rows | Where-Object Status -eq 'Warning').Count
-  $dash.Status.Text = if ($p + $w) { "$p problem(s) and $w recommendation(s). Select one to see what to do." } else { "Everything looks good. Nothing needs doing." }
+  $dash.Status.Text = if ($p + $w) { "$p problem(s) and $w recommendation(s) - see Recommendations below." } else { "Everything looks good. Nothing needs doing." }
   $dash.Run.Enabled = $true; $dash.Rep.Enabled = $true; $form.Cursor = 'Default'
 })
-
 $dash.List.Add_SelectedIndexChanged({
   if (-not $dash.List.SelectedItems.Count) { $dash.Do.Enabled = $false; return }
   $r = $dash.List.SelectedItems[0].Tag
@@ -289,7 +388,7 @@ $dash.List.Add_SelectedIndexChanged({
   $dash.Do.Enabled = [bool]$r.Action
 })
 
-# Actions only navigate or open Windows' own tools - CleanSweep never changes settings from here
+# Recommendation actions only navigate or open Windows' own tools
 function Invoke-FindingAction($action) {
   switch -Regex ($action) {
     '^tab:junk$'   { $tabs.SelectedTab = $junk.Page }
@@ -307,33 +406,139 @@ function Invoke-FindingAction($action) {
 }
 $dash.Do.Add_Click({ if ($dash.List.SelectedItems.Count) { Invoke-FindingAction $dash.List.SelectedItems[0].Tag.Action } })
 $dash.List.Add_DoubleClick({ if ($dash.List.SelectedItems.Count -and $dash.List.SelectedItems[0].Tag.Action) { Invoke-FindingAction $dash.List.SelectedItems[0].Tag.Action } })
-
 $dash.Rep.Add_Click({
   $sd = New-Object Windows.Forms.SaveFileDialog -Property @{Filter="Text file (*.txt)|*.txt"; FileName="CleanSweep health report.txt"}
   if ($sd.ShowDialog() -ne 'OK') { return }
   $score = Get-HealthScore $script:Findings
-  $txt = "CleanSweep health report - " + (Get-Date).ToString("yyyy-MM-dd HH:mm") + "`r`nComputer: $env:COMPUTERNAME`r`nHealth score: $score ($(Get-Grade $score))`r`n`r`n" +
+  $txt = "CleanSweep health report - " + (Get-Date).ToString("yyyy-MM-dd HH:mm") + "`r`nComputer: $env:COMPUTERNAME ($model, $osInfo)`r`nHealth score: $score ($(Get-Grade $score))`r`n`r`n" +
     (($script:Findings | Sort-Object { $StatusOrder[$_.Status] } | ForEach-Object { "[$($_.Status)] $($_.Area): $($_.Finding)" + $(if ($_.Advice -and $_.Status -ne 'OK') { "`r`n    What to do: $($_.Advice)" } else { "" }) }) -join "`r`n")
   Set-Content -LiteralPath $sd.FileName -Value $txt -Encoding UTF8
 })
 
-# Live CPU / memory (every 2 seconds while the Dashboard is showing)
-function Update-Live {
-  try {
-    $cpu = [int](Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop).PercentProcessorTime
-    $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
-    $ram = [int](([double]$os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize * 100)
-    $dash.CpuL.Text = "CPU $cpu%"; $dash.RamL.Text = "Memory $ram% of $(Fmt ([double]$os.TotalVisibleMemorySize * 1KB))"
-    if ($script:HaveCharts) {
-      foreach ($pair in @(@($dash.CpuC, $cpu), @($dash.RamC, $ram))) {
-        $pts = $pair[0].Series[0].Points; [void]$pts.AddY($pair[1]); while ($pts.Count -gt 60) { $pts.RemoveAt(0) }
-      }
+# ---------------------------------------------------------------- one-click actions
+# Each action shows what it does on the matching page; anything that changes the PC still asks first
+function Invoke-QuickAction($key) {
+  if ($script:RepairBusy) { [void][CSMsg]::Show("Another task is still running. Wait for it to finish or cancel it first.","CleanSweep","OK","Information"); return }
+  $tile = $dash.Tiles[$key]
+  switch ($key) {
+    'clean' {
+      Load-Drives; foreach ($cb in $script:DriveChecks) { $cb.Checked = ($cb.Tag -eq $SysDrive) }
+      $tabs.SelectedTab = $junk.Page; [Windows.Forms.Application]::DoEvents(); $junk.Scan.PerformClick()
+      if ($junk.Clean.Enabled) { $junk.Clean.PerformClick() }
     }
-  } catch {}
+    'space' { Invoke-FindingAction 'tab:drives'; [Windows.Forms.Application]::DoEvents(); foreach ($i in $drv.List.Items) { $i.Checked = ($i.Tag.Letter -eq $SysDrive) }; Update-DriveButtons; $drv.Large.PerformClick() }
+    'repair' { $tabs.SelectedTab = $rep.Page; [Windows.Forms.Application]::DoEvents(); $rep.Rec.PerformClick() }
+    'optimize' {
+      $tabs.SelectedTab = $drv.Page; [Windows.Forms.Application]::DoEvents()
+      foreach ($i in $drv.List.Items) { $i.Checked = [bool]($i.Tag.Letter -and $i.Tag.Media -notmatch 'USB|Removable') }; Update-DriveButtons
+      if ([CSMsg]::Show("Optimize $((Get-CheckedDrives | ForEach-Object Letter) -join ', ')?`n`nWindows trims SSDs and defragments hard drives - the same thing its weekly maintenance does.","CleanSweep","YesNo","Question") -eq 'Yes') { $drv.Opt.PerformClick() }
+    }
+    'network' { $tabs.SelectedTab = $wifi.Page; [Windows.Forms.Application]::DoEvents(); $wifi.Scan.PerformClick() }
+    'restore' {
+      $tile.Sub.Text = "Creating restore point..."; $form.Cursor = 'WaitCursor'; [Windows.Forms.Application]::DoEvents()
+      $ok = New-RestorePoint "CleanSweep - manual restore point"; $form.Cursor = 'Default'
+      $tile.Sub.Text = if ($ok) { "Created " + (Get-Date).ToString("MMM d, h:mm tt") } else { "Not available (System Restore is off)" }
+      if (-not $ok) { [void][CSMsg]::Show("A restore point could not be created. System Restore may be turned off - turn it on in Control Panel > System > System Protection.","CleanSweep","OK","Information") }
+    }
+  }
 }
-$liveTimer = New-Object Windows.Forms.Timer -Property @{Interval=2000}
-$liveTimer.Add_Tick({ if ($tabs.SelectedTab -eq $dash.Page -and $form.WindowState -ne 'Minimized') { Update-Live } })
+
+# ---------------------------------------------------------------- hardware monitor (background sampler)
+# Static details read once
+$HwStatic = @{}
+try { $cpuW = Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1
+  $HwStatic.Cpu = ($cpuW.Name -replace '\(R\)|\(TM\)|CPU|Processor|\s+@.*$', '' -replace '\s+', ' ').Trim(); $HwStatic.Cores = "$($cpuW.NumberOfCores) cores, $($cpuW.NumberOfLogicalProcessors) threads"; $HwStatic.MaxMhz = $cpuW.MaxClockSpeed } catch {}
+try { $gpuW = @(Get-CimInstance Win32_VideoController -ErrorAction Stop | Where-Object { $_.Name -notmatch 'Basic Display|Remote|Hyper-V|Mirror' })
+  $HwStatic.Gpu = if ($gpuW) { $gpuW[0].Name } else { "Basic display adapter" }; $HwStatic.GpuDrv = if ($gpuW) { "Driver $($gpuW[0].DriverVersion)" } else { "" } } catch {}
+try { $mem = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop); $spd = ($mem | Measure-Object Speed -Maximum).Maximum; $HwStatic.RamInfo = "$($mem.Count) module(s)$(if ($spd) { ", $spd MT/s" })" } catch {}
+
+$SampleBlock = {
+  param([int]$tick)
+  $r = @{}
+  try { $r.Cpu = [int](Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop).PercentProcessorTime } catch {}
+  try { $r.CpuPerf = [int](Get-CimInstance Win32_PerfFormattedData_Counters_ProcessorInformation -Filter "Name='_Total'" -ErrorAction Stop).PercentProcessorPerformance } catch {}
+  try { $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop; $r.RamTotal = [double]$os.TotalVisibleMemorySize * 1KB; $r.RamFree = [double]$os.FreePhysicalMemory * 1KB
+        $r.Commit = ([double]$os.TotalVirtualMemorySize - $os.FreeVirtualMemory) * 1KB; $r.Boot = $os.LastBootUpTime } catch {}
+  try { $d = Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction Stop
+        $r.DiskBusy = [int][math]::Max(0, [math]::Min(100, 100 - $d.PercentIdleTime)); $r.DiskRead = [double]$d.DiskReadBytesPersec; $r.DiskWrite = [double]$d.DiskWriteBytesPersec } catch {}
+  try { $c = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'" -ErrorAction Stop; $r.SysFree = [double]$c.FreeSpace; $r.SysSize = [double]$c.Size } catch {}
+  try { $n = @(Get-CimInstance Win32_PerfFormattedData_Tcpip_NetworkInterface -ErrorAction Stop | Where-Object { $_.Name -notmatch 'isatap|Teredo|Loopback|vEthernet' })
+        $r.NetDown = [double](($n | Measure-Object BytesReceivedPersec -Sum).Sum); $r.NetUp = [double](($n | Measure-Object BytesSentPersec -Sum).Sum) } catch {}
+  try { $gp = @(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction Stop | Where-Object { $_.Name -like '*engtype_3D*' })
+        if ($gp) { $r.Gpu = [int][math]::Min(100, ($gp | Measure-Object UtilizationPercentage -Sum).Sum) } } catch {}
+  try { $gm = @(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory -ErrorAction Stop); if ($gm) { $r.GpuMem = [double](($gm | Measure-Object DedicatedUsage -Sum).Sum) } } catch {}
+  try { $b = Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object -First 1
+        if ($b) { $r.Bat = [int]$b.EstimatedChargeRemaining; $r.BatAC = ($b.BatteryStatus -in 2,6,7,8,9); $r.BatMin = if ($b.EstimatedRunTime -and $b.EstimatedRunTime -lt 71582788) { [int]$b.EstimatedRunTime } else { $null } } } catch {}
+  # Temperatures every ~30 s (drive sensors are slow to read)
+  if ($tick % 20 -eq 0) {
+    $temps = @()
+    try { $lhm = @(Get-CimInstance -Namespace root\LibreHardwareMonitor -ClassName Sensor -ErrorAction Stop | Where-Object { $_.SensorType -eq 'Temperature' -and $_.Name -match 'CPU Package|Core \(Tctl|GPU Core' })
+          foreach ($s in $lhm) { $temps += "{0} {1:N0} $([char]0xB0)C" -f $(if ($s.Name -match 'GPU') { 'GPU' } else { 'CPU' }), $s.Value } } catch {}
+    if (-not ($temps -match '^CPU')) {
+      try { $tz = @(Get-CimInstance -Namespace root\wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop | ForEach-Object { $_.CurrentTemperature / 10 - 273.15 } | Where-Object { $_ -gt 15 -and $_ -lt 110 })
+            if ($tz) { $temps += "CPU zone {0:N0} $([char]0xB0)C" -f ($tz | Measure-Object -Maximum).Maximum } } catch {}
+    }
+    try { foreach ($pd in (Get-PhysicalDisk -ErrorAction Stop)) { $rc = $pd | Get-StorageReliabilityCounter -ErrorAction Ignore; if ($rc.Temperature) { $temps += "Drive {0} {1} $([char]0xB0)C" -f $pd.DeviceId, $rc.Temperature } } } catch {}
+    $r.Temps = $temps
+  }
+  $r
+}
+
+$script:HwData = @{}
+function Apply-Sample($s) {
+  foreach ($k in $s.Keys) { $script:HwData[$k] = $s[$k] }
+  $d = $script:HwData
+  function Push($key, $v) { $sp = $Spark[$key]; if ($null -eq $v) { return }; $sp.Data.Add([double]$v); while ($sp.Data.Count -gt 60) { $sp.Data.RemoveAt(0) }; $sp.Panel.Invalidate() }
+  if ($null -ne $d.Cpu) {
+    $HW.cpu.Value.Text = "$($d.Cpu)%"
+    $ghz = if ($d.CpuPerf -and $HwStatic.MaxMhz) { "  $([char]0xB7)  {0:N2} GHz" -f ($HwStatic.MaxMhz * $d.CpuPerf / 100 / 1000) } else { "" }
+    $HW.cpu.Sub.Text = "$($HwStatic.Cpu)`n$($HwStatic.Cores)$ghz"; Push 'cpu' $d.Cpu
+  }
+  if ($d.RamTotal) {
+    $used = $d.RamTotal - $d.RamFree; $pct = [int]($used / $d.RamTotal * 100)
+    $HW.ram.Value.Text = "$pct%"; $HW.ram.Sub.Text = "$(Fmt $used) of $(Fmt $d.RamTotal) in use`nCommitted $(Fmt $d.Commit)$(if ($HwStatic.RamInfo) { '  $([char]0xB7)  ' + $HwStatic.RamInfo })"; Push 'ram' $pct
+  }
+  if ($null -ne $d.Gpu) { $HW.gpu.Value.Text = "$($d.Gpu)%"; Push 'gpu' $d.Gpu } else { $HW.gpu.Value.Text = "n/a" }
+  $HW.gpu.Sub.Text = "$($HwStatic.Gpu)`n$(if ($d.GpuMem) { 'Video memory ' + (Fmt $d.GpuMem) + '  $([char]0xB7)  ' })$($HwStatic.GpuDrv)"
+  if ($null -ne $d.DiskBusy) {
+    $HW.disk.Value.Text = "$($d.DiskBusy)%"
+    $HW.disk.Sub.Text = "Read $(Fmt $d.DiskRead)/s  $([char]0xB7)  Write $(Fmt $d.DiskWrite)/s`n$SysDrive $(Fmt $d.SysFree) free of $(Fmt $d.SysSize)"; Push 'disk' $d.DiskBusy
+  }
+  if ($null -ne $d.NetDown) {
+    $HW.net.Value.Text = "{0:N1} Mbps" -f ($d.NetDown * 8 / 1MB)
+    $HW.net.Sub.Text = "Download {0:N1} Mbps  $([char]0xB7)  Upload {1:N1} Mbps`nLive traffic on all adapters" -f ($d.NetDown * 8 / 1MB), ($d.NetUp * 8 / 1MB); Push 'net' ($d.NetDown * 8 / 1MB)
+  }
+  $tempTxt = if ($d.Temps) { ($d.Temps | Select-Object -First 3) -join '  $([char]0xB7)  ' } else { "Temperatures: not reported by this PC" }
+  if ($null -ne $d.Bat) {
+    $HW.bat.Title.Text = "Battery and temperatures"; $HW.bat.Value.Text = "$($d.Bat)%"
+    $state = if ($d.BatAC) { "Plugged in" } elseif ($d.BatMin) { "{0}h {1:00}m left" -f [int][math]::Floor($d.BatMin / 60), ($d.BatMin % 60) } else { "On battery" }
+    $HW.bat.Sub.Text = "$state`n$tempTxt"; Push 'bat' $d.Bat
+  } else {
+    $HW.bat.Title.Text = "System and temperatures"
+    if ($d.Boot) { $up = (Get-Date) - $d.Boot; $HW.bat.Value.Text = "{0}d {1}h" -f $up.Days, $up.Hours }
+    $HW.bat.Sub.Text = "Uptime (desktop - no battery)`n$tempTxt"
+  }
+}
+
+# Background sampler: reads counters off the UI thread so the window never stutters
+$HwSync = [hashtable]::Synchronized(@{ Run=$true; Active=$true; Data=$null; Seq=0 })
+try {
+  $rs = [runspacefactory]::CreateRunspace(); $rs.ApartmentState = 'MTA'; $rs.Open(); $rs.SessionStateProxy.SetVariable('HwSync', $HwSync)
+  $ps = [powershell]::Create(); $ps.Runspace = $rs
+  [void]$ps.AddScript({ param($code) $sb = [scriptblock]::Create($code); $t = 0
+    while ($HwSync.Run) { if ($HwSync.Active) { try { $HwSync.Data = & $sb $t; $HwSync.Seq++ } catch {}; $t++ }; Start-Sleep -Milliseconds 1500 } }).AddArgument($SampleBlock.ToString())
+  $script:HwHandle = $ps.BeginInvoke(); $script:HwPs = $ps
+} catch { $HwSync.Run = $false }
+$script:HwSeen = -1
+function Update-Live {
+  if ($HwSync.Seq -ne $script:HwSeen -and $HwSync.Data) { $script:HwSeen = $HwSync.Seq; Apply-Sample $HwSync.Data }
+  elseif (-not $script:HwData.Count -or -not $HwSync.Run) { Apply-Sample (& $SampleBlock 0) }   # first paint / no background thread
+}
+$liveTimer = New-Object Windows.Forms.Timer -Property @{Interval=1000}
+$liveTimer.Add_Tick({ $HwSync.Active = ($tabs.SelectedTab -eq $dash.Page -and $form.WindowState -ne 'Minimized'); if ($HwSync.Active) { Update-Live } })
 $liveTimer.Start()
+$form.Add_FormClosed({ $HwSync.Run = $false; $liveTimer.Stop() })
+$script:HaveCharts = $true
 Update-Live; Show-History
 
 # First check runs automatically when the window opens (read-only)

@@ -24,7 +24,7 @@ $HealthChecks = [ordered]@{
         New-Finding "Storage" "Problem" "$($d.DeviceID) is almost full: $free free ($pct%)" "Windows slows down and updates can fail when the system drive is nearly full. Clean junk files, then move or delete large files you don't need." "tab:junk" "Clean junk files" }
       elseif ($pct -lt 20) {
         New-Finding "Storage" "Warning" "$($d.DeviceID) is getting full: $free free ($pct%)" "Keeping at least 15-20% free helps performance and leaves room for updates." "tab:junk" "Clean junk files" }
-      else { New-Finding "Storage" "OK" "$($d.DeviceID): $free free ($pct%)" }
+      else { New-Finding "Storage" "OK" "$($d.DeviceID) $free free ($pct%)" }
     }
   }
 
@@ -32,7 +32,8 @@ $HealthChecks = [ordered]@{
     $disks = @(Get-PhysicalDisk -ErrorAction Stop)
     if (-not $disks) { New-Finding "Drive health" "Info" "No drive health data available"; return }
     foreach ($pd in $disks) {
-      $name = "$($pd.FriendlyName) ($($pd.MediaType))"
+      $mt = if ($pd.MediaType -in 'SSD','HDD') { "$($pd.MediaType), " } else { "" }
+      $name = "$($pd.FriendlyName) ($mt$([math]::Round($pd.Size / 1GB)) GB)"
       $rc = $null; try { $rc = $pd | Get-StorageReliabilityCounter -ErrorAction Stop } catch {}
       $bits = @()
       if ($rc) {
@@ -132,7 +133,7 @@ $HealthChecks = [ordered]@{
 
   "Devices" = {
     $bad = @(Get-CimInstance Win32_PnPEntity -ErrorAction Stop | Where-Object { $_.ConfigManagerErrorCode -notin 0, 22, 45 })
-    if ($bad) { New-Finding "Devices" "Warning" "$($bad.Count) device(s) not working: $(($bad | Select-Object -First 3 | ForEach-Object Name) -join '; ')" "Usually a missing or broken driver. Device Manager shows the error; Windows Update > Optional updates may have the driver." "run:devmgmt.msc" "Open Device Manager" }
+    if ($bad) { New-Finding "Devices" "Warning" "$($bad.Count) device(s) not working: $(($bad | Select-Object -First 3 | ForEach-Object { if ($_.Name) { $_.Name } elseif ($_.Description) { $_.Description } else { $_.PNPDeviceID } }) -join '; ')" "Usually a missing or broken driver. Device Manager shows the error; Windows Update > Optional updates may have the driver." "run:devmgmt.msc" "Open Device Manager" }
     else { New-Finding "Devices" "OK" "All devices are working" }
   }
 

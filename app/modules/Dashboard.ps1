@@ -237,7 +237,9 @@ $dash.Do  = New-Object Windows.Forms.Button -Property ($bp + @{Text="Do suggeste
 $dash.Rep = New-Object Windows.Forms.Button -Property ($bp + @{Text="Save report..."; Enabled=$false})
 $dash.Bar.Controls.AddRange(@($dash.Run, $dash.Do, $dash.Rep))
 $dash.Page.Controls.Add($dash.List); $dash.Page.Controls.Add($dash.Advice); $dash.Page.Controls.Add($dash.Bar); $dash.Page.Controls.Add($dash.Status); $dash.Page.Controls.Add($dash.Top)
-$tabs.TabPages.Insert(0, $dash.Page)
+# TabPages.Insert is ignored before the control has a window handle, so rebuild the order instead
+$others = @($tabs.TabPages | ForEach-Object { $_ }); $tabs.TabPages.Clear()
+$tabs.TabPages.Add($dash.Page); foreach ($p in $others) { $tabs.TabPages.Add($p) }
 $tabs.SelectedIndex = 0
 
 $StatusColor = @{ Problem='Firebrick'; Warning='DarkOrange'; OK='ForestGreen'; Info='DimGray' }

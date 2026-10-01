@@ -112,7 +112,7 @@ Step "Registry: clean (with backup)" {
   if (-not $found) { Write-Error "Test startup entry pointing to a missing exe was not detected" }
   foreach ($i in $reg.List.Items) { $i.Checked = ($i.SubItems[1].Text -like "*CleanSweepTest*") }
   $reg.Clean.PerformClick(); Note "    $($reg.Status.Text)"
-  if ((Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name CleanSweepTest -ErrorAction SilentlyContinue)) { Write-Error "Test entry was not removed" }
+  if ((Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name CleanSweepTest -ErrorAction Ignore)) { Write-Error "Test entry was not removed" }
   $bk = Get-ChildItem $backupDir -Filter *.reg -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
   if (-not $bk) { Write-Error "No registry backup file was written" } else { Note "    backup: $($bk.Name) ($($bk.Length) bytes)"; if (-not (Select-String -LiteralPath $bk.FullName -Pattern CleanSweepTest -Encoding Unicode -Quiet)) { Write-Error "Backup does not contain the removed entry" } }
 }

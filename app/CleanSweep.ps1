@@ -346,7 +346,8 @@ $reg.Extra.Controls.Add($rpBox); $reg.Extra.Controls.SetChildIndex($rpBox, 0); $
 $reg.Scan.Add_Click({
   Set-Busy $reg $true; $reg.List.Items.Clear(); $reg.Status.Text = "Scanning the registry..."
   try { Scan-Registry; $n = $reg.List.Items.Count
-    $reg.Status.Text = if ($n) { "Found $n invalid registry entries." } else { "No registry issues found." }
+    $rec = @($reg.List.Items | Where-Object Checked).Count
+    $reg.Status.Text = if (-not $n) { "No registry issues found." } elseif ($rec) { "Found $n entries - $rec worth removing (ticked)." } else { "Found $n harmless leftover entries - nothing needs removing." }
   } catch { $reg.Status.Text = "Scan cancelled. Showing what was found so far." }
   Set-Busy $reg $false; $reg.Clean.Enabled = ($reg.List.Items.Count -gt 0)
 })
@@ -451,6 +452,8 @@ function Get-EthAdapter {
   return $r
 }
 # The adapter chosen in the Connection box
+# Interface metric for route ordering; some virtual/hidden interfaces can't be read, so treat them as last
+function Get-IfMetric($idx) { try { [int](Get-NetIPInterface -InterfaceIndex $idx -AddressFamily IPv4 -ErrorAction Stop).InterfaceMetric } catch { 9999 } }
 function Get-NetTarget { if ($script:NetKind -eq "Ethernet") { Get-EthAdapter } else { Get-WifiAdapter } }
 function Get-WifiAdapter {
   Get-NetAdapter -Physical -ErrorAction Ignore | Where-Object { $_.NdisPhysicalMedium -eq 9 -or $_.InterfaceDescription -match 'Wi-?Fi|Wireless|802\.11|WLAN' } |
@@ -540,7 +543,7 @@ $connBox = New-Object Windows.Forms.ComboBox -Property @{DropDownStyle='DropDown
 $wifi.Extra.Controls.AddRange(@($connLabel, $connBox, $dnsLabel, $dnsBox, $nearBtn))
 # Start on whichever connection Windows is actually using for the internet
 try {
-  $route = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction Stop | Sort-Object { $_.RouteMetric + (Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction Ignore).InterfaceMetric } | Select-Object -First 1
+  $route = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction Stop | Sort-Object { $_.RouteMetric + (Get-IfMetric $_.ifIndex) } | Select-Object -First 1
   $eth = Get-EthAdapter
   if ($route -and $eth -and $route.ifIndex -eq $eth.ifIndex) { $script:NetKind = "Ethernet" }
   elseif ($eth -and -not (Get-WifiAdapter)) { $script:NetKind = "Ethernet" }   # no Wi-Fi card at all
@@ -795,7 +798,7 @@ function Invoke-EthDiagnostics {
 
   # 10. Is Windows actually using the cable?
   Progress "route preference"
-  $route = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction Ignore | Sort-Object { $_.RouteMetric + (Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction Ignore).InterfaceMetric } | Select-Object -First 1
+  $route = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction Ignore | Sort-Object { $_.RouteMetric + (Get-IfMetric $_.ifIndex) } | Select-Object -First 1
   if ($route -and $route.ifIndex -eq $a.ifIndex) { Add-Row "Internet traffic uses" "Ethernet" "OK" }
   elseif ($route) { $other = (Get-NetAdapter -InterfaceIndex $route.ifIndex -ErrorAction Ignore).Name
     Add-Row "Internet traffic uses" "$other (not Ethernet)" "Warning" "Windows is sending traffic over $other instead of the cable. Turn off Wi-Fi or VPN while wired, or lower the Ethernet interface metric." }

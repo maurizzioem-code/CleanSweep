@@ -1,6 +1,6 @@
 {
-  "version": "4.0",
-  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-4.0.zip",
-  "sha256": "DF7384E3AC4B6ADE00A65E7AE29ADF9BC5DE672EBB5891CAAE80C60BC5A423DD",
-  "notes": "CleanSweep 4.0: new dark Windows 11 style design with sidebar, health score dashboard, live hardware monitor, one-click actions and a Drives tab with checkboxes."
+  "version": "4.1",
+  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-4.1.zip",
+  "sha256": "8CA0BF7E3FDDD6C300C349F94BC6FC343F5F30526FAFF23A3635E4025E543BBE",
+  "notes": "CleanSweep 4.1: automatic cleanup scheduling on the Dashboard (daily, weekly or every 4 weeks, runs even when CleanSweep is closed). Dark pop-up windows. Fixed sidebar icons while a window is open."
 }

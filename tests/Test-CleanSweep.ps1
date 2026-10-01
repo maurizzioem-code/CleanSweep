@@ -2,6 +2,7 @@
 # Loads the app without blocking, drives every tab, checks layout, takes screenshots and records errors.
 param([string]$Out = "$PSScriptRoot\..\test-output")
 $ErrorActionPreference = "Continue"
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 New-Item -ItemType Directory $Out -Force | Out-Null
 $Out = (Resolve-Path $Out).Path
 $env:CLEANSWEEP_TEST = "1"
@@ -45,10 +46,16 @@ Note "Windows: $((Get-CimInstance Win32_OperatingSystem).Caption) $((Get-CimInst
 Note "PowerShell: $($PSVersionTable.PSVersion)   DPI scale: $([Windows.Forms.Screen]::PrimaryScreen.Bounds)"
 
 # ---------------------------------------------------------------- load
-Step "App loads without errors" {
-  $script:startOut = . "$PSScriptRoot\..\app\CleanSweep.ps1" 6>&1 *>&1 | Out-String
-  if ($script:startOut -match 'STARTUP ERROR') { Write-Error $script:startOut }
-  if (-not $form) { throw "Main window was not created" }
+# Load the app in THIS scope (dot-source) so its functions and controls can be driven
+$before = $Error.Count; $sw = [Diagnostics.Stopwatch]::StartNew()
+$startOut = . "$PSScriptRoot\..\app\CleanSweep.ps1" *>&1 | Out-String
+$sw.Stop()
+$loadErrs = @(); if ($Error.Count -gt $before) { $loadErrs = @($Error[0..($Error.Count - $before - 1)] | ForEach-Object { "$_ (line $($_.InvocationInfo.ScriptLineNumber))" }) }
+if ($startOut -match 'STARTUP ERROR') { $loadErrs += $startOut.Trim() }
+if (-not $form) { $loadErrs += "Main window was not created" }
+$results.Add([pscustomobject]@{ Step="App loads without errors"; Status=$(if ($loadErrs) { "ISSUES" } else { "PASS" }); Seconds=[math]::Round($sw.Elapsed.TotalSeconds,1); Errors=$loadErrs })
+Note "[$(if ($loadErrs) { 'ISSUES' } else { 'PASS' })] App loads ($([math]::Round($sw.Elapsed.TotalSeconds,1))s)"; foreach ($e in $loadErrs) { Note "    $e" }
+if (-not $form) { throw "Main window was not created" }
 }
 if (-not $form) { $results | ConvertTo-Json -Depth 4 | Set-Content "$Out\results.json"; exit 1 }
 $form.StartPosition = 'Manual'; $form.Location = '0,0'

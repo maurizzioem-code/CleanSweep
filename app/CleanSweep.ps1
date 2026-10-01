@@ -538,10 +538,10 @@ $commonOpts = [ordered]@{
   "Clear ARP cache"                 = @("Clears the local device address table, which fixes some router connection glitches.", $true)
   "Renew IP address"                = @("Asks your router for a fresh IP address. The connection drops for a few seconds.", $true)
 }
-$wifiOnly = [ordered]@{ "Wi-Fi power: max performance" = @("Stops Windows throttling the Wi-Fi card to save power when plugged in (light saving on battery).", $true) }
-$ethOnly  = [ordered]@{ "Ethernet power saving off" = @("Turns off Energy Efficient / Green Ethernet, which can add lag. The cable reconnects briefly.", $true) }
+$wifiOnly = [ordered]@{ "Wi-Fi power: max performance" = @("Optional. Only if you get lag spikes or drop-outs: stops Windows power-saving the Wi-Fi card when plugged in.", $false) }
+$ethOnly  = [ordered]@{ "Ethernet power saving off" = @("Optional. Only if the cable connection drops out: turns off Energy Efficient / Green Ethernet. Reconnects briefly.", $false) }
 $tailOpts = [ordered]@{
-  "Reset TCP auto-tuning to normal"  = @("Restores Windows' default download window scaling if another tool changed it.", $true)
+  "Reset TCP auto-tuning to normal"  = @("Restores the Windows default only if another tool changed it. No other TCP tweaks are applied.", $true)
   "Reset network stack (Winsock/IP)" = @("Deep repair for broken connections. Needs a restart. Only use if your internet is misbehaving.", $false)
 }
 function Load-NetOpts {

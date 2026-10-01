@@ -1,9 +1,28 @@
 # CleanSweep - a simple disk, registry and shortcut cleaner for Windows 11
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Windows.Forms.Application]::EnableVisualStyles()
-$Version = "2.7"
+$Version = "3.0"
+$TestMode = ($env:CLEANSWEEP_TEST -eq "1")   # automated tests: message boxes answer themselves, nothing waits for a click
+# All message boxes go through CSMsg so automated tests can answer them
+if (-not ("CSMsg" -as [type])) {
+Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @"
+using System.Windows.Forms; using System.Collections.Generic;
+public static class CSMsg {
+  public static bool Test = false;
+  public static List<string> Log = new List<string>();
+  public static DialogResult Show(string t) { return Show(t, "CleanSweep", MessageBoxButtons.OK, MessageBoxIcon.None); }
+  public static DialogResult Show(string t, string c) { return Show(t, c, MessageBoxButtons.OK, MessageBoxIcon.None); }
+  public static DialogResult Show(string t, string c, MessageBoxButtons b) { return Show(t, c, b, MessageBoxIcon.None); }
+  public static DialogResult Show(string t, string c, MessageBoxButtons b, MessageBoxIcon i) {
+    if (Test) { Log.Add("[" + c + "] " + t.Replace("\n", " | ")); return (b == MessageBoxButtons.OK) ? DialogResult.OK : DialogResult.Yes; }
+    return MessageBox.Show(t, c, b, i);
+  }
+}
+"@
+}
+[CSMsg]::Test = $TestMode
 # Show any startup error instead of failing silently
-trap { [void][System.Windows.Forms.MessageBox]::Show("CleanSweep hit an error:`n`n$_`n`nLine: $($_.InvocationInfo.ScriptLineNumber)","CleanSweep","OK","Error"); break }
+trap { if ($TestMode) { Write-Host "STARTUP ERROR line $($_.InvocationInfo.ScriptLineNumber): $_"; continue }; [void][CSMsg]::Show("CleanSweep hit an error:`n`n$_`n`nLine: $($_.InvocationInfo.ScriptLineNumber)","CleanSweep","OK","Error"); break }
 
 # ---------------------------------------------------------------- helpers
 function Fmt($b) { if ($b -ge 1GB) { "{0:N2} GB" -f ($b/1GB) } elseif ($b -ge 1MB) { "{0:N1} MB" -f ($b/1MB) } else { "{0:N0} KB" -f ($b/1KB) } }
@@ -70,6 +89,9 @@ function Set-Busy($t, [bool]$busy) {
 
 # ================================================================ 1. JUNK FILES
 $L = $env:LOCALAPPDATA; $W = $env:WINDIR
+$SysDrive = $env:SystemDrive.TrimEnd('\')           # usually C:
+$MySid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+# Windows junk (only lives on the system drive)
 $targets = [ordered]@{
   "User Temp Files"             = @("$env:TEMP")
   "Windows Temp Files"          = @("$W\Temp")
@@ -81,53 +103,132 @@ $targets = [ordered]@{
   "Edge Cache"                  = @("$L\Microsoft\Edge\User Data\*\Cache","$L\Microsoft\Edge\User Data\*\Code Cache")
   "Firefox Cache"               = @("$L\Mozilla\Firefox\Profiles\*\cache2")
   "Delivery Optimization"       = @("$W\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache")
-  "Recycle Bin"                 = @("RECYCLE")
 }
 function Get-Items($paths) {
   foreach ($p in $paths) {
-    if ($p -eq "RECYCLE") { continue }
     Get-Item -Path $p -Force -ErrorAction SilentlyContinue | ForEach-Object {
       if ($_.PSIsContainer) { Get-ChildItem $_.FullName -Recurse -Force -File -ErrorAction SilentlyContinue } else { $_ }
     }
   }
 }
-function Get-RecycleSize { $s = 0; try { (New-Object -ComObject Shell.Application).NameSpace(10).Items() | ForEach-Object { $s += $_.Size } } catch {}; $s }
+# This user's Recycle Bin folder on a given drive
+function Get-RecycleFiles($drive) { Get-ChildItem -LiteralPath "$drive\`$Recycle.Bin\$MySid" -Recurse -Force -File -ErrorAction SilentlyContinue }
 
-$junk = New-Tab "Junk Files" @(,@("Category",480)) "Click Scan to find junk files."
+# Leftover temp files on any drive: walks folders itself so it never follows junctions/links
+$skipDirs = '^(\$Recycle\.Bin|System Volume Information|Windows|Program Files|Program Files \(x86\)|ProgramData|Recovery|\$WinREAgent|\$SysReset|Config\.Msi|MSOCache)$'
+$junkNames = '(\.tmp|\.temp|\._mp|\.chk|\.gid|\.old\.tmp)$|^(Thumbs\.db|ehthumbs\.db|~\$.+)$'
+function Get-DriveJunk($drive) {
+  $cut = (Get-Date).AddDays(-1)    # leave anything touched in the last day (may be in use)
+  $stack = New-Object System.Collections.Stack; $stack.Push("$drive\"); $n = 0
+  while ($stack.Count) {
+    $dir = $stack.Pop()
+    if ((++$n % 200) -eq 0) { $junk.Status.Text = "Scanning $dir"; Check-Cancel }
+    foreach ($e in (Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) {
+      if ($e.PSIsContainer) {
+        if ($e.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+        if ($dir.Length -le 3 -and $e.Name -match $skipDirs) { continue }
+        if ($e.Name -match '^FOUND\.\d{3}$') { Get-ChildItem -LiteralPath $e.FullName -Force -File -Filter *.chk -ErrorAction SilentlyContinue; continue }
+        $stack.Push($e.FullName)
+      } elseif ($e.Name -match $junkNames -and $e.LastWriteTime -lt $cut) { $e }
+    }
+  }
+}
+
+$junk = New-Tab "Junk Files" @(,@("Category",480)) "Choose drives, then click Scan to find junk files."
 [void]$junk.List.Columns.Add("Size",200)
-foreach ($k in $targets.Keys) { $i = $junk.List.Items.Add($k); [void]$i.SubItems.Add("-"); $i.Checked = $true }
 $disk = New-Object Windows.Forms.Label -Property @{AutoSize=$true; Margin='12,9,0,0'}
 $junk.Bar.Controls.Add($disk)
-function Upd-Disk { $d = Get-PSDrive C; $disk.Text = "C: free " + (Fmt $d.Free) + " of " + (Fmt ($d.Free+$d.Used)) }
-Upd-Disk
+
+# ---- drive picker
+$driveLabel = New-Object Windows.Forms.Label -Property @{Text="Drives:"; AutoSize=$true; Margin='0,6,6,0'; Font=New-Object Drawing.Font("Segoe UI",10,[Drawing.FontStyle]::Bold)}
+$driveFlow  = New-Object Windows.Forms.FlowLayoutPanel -Property @{AutoSize=$true; AutoSizeMode='GrowAndShrink'; WrapContents=$true; Margin='0,0,0,0'}
+$driveRefresh = New-Object Windows.Forms.Button -Property @{Text="Refresh drives"; AutoSize=$true; MinimumSize='130,30'; Margin='6,0,0,0'}
+$junk.Extra.Controls.AddRange(@($driveLabel, $driveFlow, $driveRefresh))
+$script:DriveChecks = @()
+
+function Get-Drives {
+  # Local disks (3) and removable drives like USB sticks and SD cards (2) that have media inserted
+  Get-CimInstance Win32_LogicalDisk -Filter "DriveType=2 OR DriveType=3" -ErrorAction SilentlyContinue | Where-Object { $_.Size -gt 0 } | Sort-Object DeviceID
+}
+function Load-Drives {
+  $prev = @{}; foreach ($c in $script:DriveChecks) { $prev[$c.Tag] = $c.Checked }
+  $driveFlow.Controls.Clear(); $script:DriveChecks = @()
+  foreach ($d in Get-Drives) {
+    $name = if ($d.VolumeName) { $d.VolumeName } elseif ($d.DeviceID -eq $SysDrive) { "Windows" } elseif ($d.DriveType -eq 2) { "USB drive" } else { "Local Disk" }
+    $cb = New-Object Windows.Forms.CheckBox -Property @{AutoSize=$true; Margin='0,4,14,0'; Tag=$d.DeviceID
+      Text = "$($d.DeviceID) $name ($(Fmt $d.FreeSpace) free of $(Fmt $d.Size))"}
+    $cb.Checked = if ($prev.ContainsKey($d.DeviceID)) { $prev[$d.DeviceID] } else { $d.DeviceID -eq $SysDrive }
+    $cb.Add_CheckedChanged({ Load-JunkList })
+    $driveFlow.Controls.Add($cb); $script:DriveChecks += $cb
+  }
+  Load-JunkList
+}
+function Get-SelectedDrives { @($script:DriveChecks | Where-Object Checked | ForEach-Object Tag) }
+
+# Rebuild the category list for the chosen drives
+function Load-JunkList {
+  $junk.List.BeginUpdate(); $junk.List.Items.Clear()
+  foreach ($d in Get-SelectedDrives) {
+    if ($d -eq $SysDrive) {
+      foreach ($k in $targets.Keys) { $i = $junk.List.Items.Add($k); [void]$i.SubItems.Add("-"); $i.Checked = $true; $i.Tag = @{Kind='paths'; Paths=$targets[$k]; Drive=$d} }
+    } else {
+      $i = $junk.List.Items.Add("Temporary and leftover files ($d)"); [void]$i.SubItems.Add("-"); $i.Checked = $true; $i.Tag = @{Kind='drivejunk'; Drive=$d}
+    }
+    $i = $junk.List.Items.Add("Recycle Bin ($d)"); [void]$i.SubItems.Add("-"); $i.Checked = $true; $i.Tag = @{Kind='recycle'; Drive=$d}
+  }
+  $junk.List.EndUpdate(); $junk.Clean.Enabled = $false
+  $sel = Get-SelectedDrives
+  $junk.Status.Text = if ($sel) { "Click Scan to find junk on " + ($sel -join ", ") + "." } else { "Tick at least one drive to scan." }
+  Upd-Disk
+}
+function Upd-Disk {
+  $parts = foreach ($d in (Get-Drives | Where-Object { (Get-SelectedDrives) -contains $_.DeviceID })) { "$($d.DeviceID) " + (Fmt $d.FreeSpace) + " free" }
+  $disk.Text = $parts -join "   "
+}
+$driveRefresh.Add_Click({ Load-Drives })
+$junk.Extra.SetFlowBreak($driveRefresh, $true)
+Load-Drives
 
 $junk.Scan.Add_Click({
-  Set-Busy $junk $true; $total = 0
+  if (-not (Get-SelectedDrives)) { [void][CSMsg]::Show("Tick at least one drive first.","CleanSweep","OK","Information"); return }
+  Set-Busy $junk $true; $driveFlow.Enabled = $false; $driveRefresh.Enabled = $false; $total = 0
   try {
     foreach ($i in $junk.List.Items) {
       $junk.Status.Text = "Scanning $($i.Text)..."; Check-Cancel
-      $p = $targets[$i.Text]
-      $sz = if ($p -contains "RECYCLE") { Get-RecycleSize } else { (Get-Items $p | ForEach-Object { Check-Cancel; $_ } | Measure-Object Length -Sum).Sum }
-      if (-not $sz) { $sz = 0 }; $i.Tag = $sz; $i.SubItems[1].Text = Fmt $sz; $total += $sz
+      $t = $i.Tag
+      $files = @(switch ($t.Kind) {
+        'paths'     { Get-Items $t.Paths | ForEach-Object { Check-Cancel; $_ } }
+        'recycle'   { Get-RecycleFiles $t.Drive }
+        'drivejunk' { Get-DriveJunk $t.Drive }
+      })
+      $sz = ($files | Measure-Object Length -Sum).Sum; if (-not $sz) { $sz = 0 }
+      $t.Size = $sz; if ($t.Kind -eq 'drivejunk') { $t.Files = $files }
+      $i.SubItems[1].Text = (Fmt $sz) + $(if ($t.Kind -eq 'drivejunk') { "  ($($files.Count) files)" } else { "" }); $total += $sz
     }
-    $junk.Status.Text = "Found " + (Fmt $total) + " of junk."; Set-Busy $junk $false; $junk.Clean.Enabled = $true
+    $junk.Status.Text = "Found " + (Fmt $total) + " of junk on " + ((Get-SelectedDrives) -join ", ") + "."; Set-Busy $junk $false; $junk.Clean.Enabled = $true
   } catch { Set-Busy $junk $false; $junk.Status.Text = "Scan cancelled." }
+  $driveFlow.Enabled = $true; $driveRefresh.Enabled = $true
 })
 $junk.Clean.Add_Click({
-  if ([Windows.Forms.MessageBox]::Show("Delete the selected junk files?","Confirm","YesNo","Warning") -ne "Yes") { return }
-  Set-Busy $junk $true; $freed = 0
+  if ([CSMsg]::Show("Delete the selected junk files on " + ((Get-SelectedDrives) -join ", ") + "?","Confirm","YesNo","Warning") -ne "Yes") { return }
+  Set-Busy $junk $true; $driveFlow.Enabled = $false; $driveRefresh.Enabled = $false; $freed = 0
   try {
     foreach ($i in $junk.List.Items) {
       if (-not $i.Checked) { continue }
       $junk.Status.Text = "Cleaning $($i.Text)..."; Check-Cancel
-      $p = $targets[$i.Text]
-      if ($p -contains "RECYCLE") { Clear-RecycleBin -Force -ErrorAction SilentlyContinue; $freed += [long]$i.Tag }
-      else { Get-Items $p | ForEach-Object { Check-Cancel; $len = $_.Length; try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop; $freed += $len } catch {} } }
+      $t = $i.Tag
+      switch ($t.Kind) {
+        'recycle'   { Clear-RecycleBin -DriveLetter $t.Drive.TrimEnd(':') -Force -ErrorAction SilentlyContinue; $freed += [long]$t.Size }
+        'drivejunk' { foreach ($f in $t.Files) { Check-Cancel; try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $freed += $f.Length } catch {} } }
+        default     { Get-Items $t.Paths | ForEach-Object { Check-Cancel; $len = $_.Length; try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop; $freed += $len } catch {} } }
+      }
       $i.SubItems[1].Text = "Cleaned"
     }
     $junk.Status.Text = "Done. Freed " + (Fmt $freed) + " (files in use were skipped)."
   } catch { $junk.Status.Text = "Cleaning stopped. Freed " + (Fmt $freed) + " before cancelling." }
-  Set-Busy $junk $false; Upd-Disk
+  $msg = $junk.Status.Text
+  Set-Busy $junk $false; $driveFlow.Enabled = $true; $driveRefresh.Enabled = $true
+  Load-Drives; $junk.Status.Text = $msg    # refresh free space on each drive
 })
 
 # ================================================================ 2. REGISTRY
@@ -194,6 +295,7 @@ function Backup-Registry($keys) {
 function New-RestorePoint([string]$desc = "CleanSweep - before registry cleaning") {
   $srKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore'
   $old = (Get-ItemProperty $srKey -Name SystemRestorePointCreationFrequency -ErrorAction SilentlyContinue).SystemRestorePointCreationFrequency
+  if (-not (Get-Command Checkpoint-Computer -ErrorAction SilentlyContinue)) { return $false }   # not available on Windows Server
   $last = (Get-ComputerRestorePoint -ErrorAction SilentlyContinue | Measure-Object SequenceNumber -Maximum).Maximum
   try {
     # Windows normally allows only one restore point per 24 hours; lift that limit just for this call
@@ -219,7 +321,7 @@ $mkRp.Add_Click({
   $ok = New-RestorePoint "CleanSweep - manual restore point"
   if (-not $ok) {
     $form.Cursor='Default'
-    if ([Windows.Forms.MessageBox]::Show("Could not create a restore point. System Protection may be turned off for drive $env:SystemDrive.`n`nTurn on System Protection and try again?","Restore point","YesNo","Question") -eq "Yes") {
+    if ([CSMsg]::Show("Could not create a restore point. System Protection may be turned off for drive $env:SystemDrive.`n`nTurn on System Protection and try again?","Restore point","YesNo","Question") -eq "Yes") {
       $form.Cursor='WaitCursor'; $reg.Status.Text = "Turning on System Protection and creating a restore point..."; $form.Refresh()
       try { Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction Stop } catch {}
       $ok = New-RestorePoint "CleanSweep - manual restore point"
@@ -228,10 +330,10 @@ $mkRp.Add_Click({
   $form.Cursor='Default'; $mkRp.Enabled = $true; $reg.Scan.Enabled = $true; $reg.Clean.Enabled = ($reg.List.Items.Count -gt 0)
   if ($ok) {
     $reg.Status.Text = "Restore point created."
-    [void][Windows.Forms.MessageBox]::Show("A System Restore point named 'CleanSweep - manual restore point' was created on " + (Get-Date).ToString("MMM d, yyyy h:mm tt") + ".`n`nTo use it later, click 'Open System Restore'.","CleanSweep","OK","Information")
+    [void][CSMsg]::Show("A System Restore point named 'CleanSweep - manual restore point' was created on " + (Get-Date).ToString("MMM d, yyyy h:mm tt") + ".`n`nTo use it later, click 'Open System Restore'.","CleanSweep","OK","Information")
   } else {
     $reg.Status.Text = "No restore point was created."
-    [void][Windows.Forms.MessageBox]::Show("Windows could not create a restore point.","CleanSweep","OK","Warning")
+    [void][CSMsg]::Show("Windows could not create a restore point.","CleanSweep","OK","Warning")
   }
 })
 $openRp.Add_Click({ Start-Process "$env:SystemRoot\System32\rstrui.exe" })
@@ -247,14 +349,14 @@ $reg.Scan.Add_Click({
 })
 $reg.Clean.Add_Click({
   $sel = @($reg.List.Items | Where-Object Checked); if (-not $sel) { return }
-  if ([Windows.Forms.MessageBox]::Show("Remove $($sel.Count) registry entries?`n`nA backup will be saved to:`n$backupDir","Confirm","YesNo","Warning") -ne "Yes") { return }
+  if ([CSMsg]::Show("Remove $($sel.Count) registry entries?`n`nA backup will be saved to:`n$backupDir","Confirm","YesNo","Warning") -ne "Yes") { return }
   $form.Cursor='WaitCursor'; $rp = $false; $reg.Scan.Enabled = $false
   if ($rpBox.Checked) {
     $reg.Status.Text = "Creating a restore point (this can take a minute)..."; $form.Refresh()
     $rp = New-RestorePoint
     if (-not $rp) {
       $form.Cursor='Default'
-      $ans = [Windows.Forms.MessageBox]::Show("Could not create a restore point. System Protection may be turned off for drive $env:SystemDrive.`n`nTurn on System Protection and try again?","Restore point","YesNoCancel","Question")
+      $ans = [CSMsg]::Show("Could not create a restore point. System Protection may be turned off for drive $env:SystemDrive.`n`nTurn on System Protection and try again?","Restore point","YesNoCancel","Question")
       if ($ans -eq "Cancel") { $reg.Status.Text = "Cleaning cancelled."; $reg.Scan.Enabled = $true; return }
       $form.Cursor='WaitCursor'
       if ($ans -eq "Yes") {
@@ -264,7 +366,7 @@ $reg.Clean.Add_Click({
       }
       if (-not $rp) {
         $form.Cursor='Default'
-        if ([Windows.Forms.MessageBox]::Show("No restore point was created.`n`nContinue anyway? A registry backup file will still be saved.","Restore point","YesNo","Warning") -ne "Yes") { $reg.Status.Text = "Cleaning cancelled."; $reg.Scan.Enabled = $true; $form.Cursor='Default'; return }
+        if ([CSMsg]::Show("No restore point was created.`n`nContinue anyway? A registry backup file will still be saved.","Restore point","YesNo","Warning") -ne "Yes") { $reg.Status.Text = "Cleaning cancelled."; $reg.Scan.Enabled = $true; $form.Cursor='Default'; return }
         $form.Cursor='WaitCursor'
       }
     }
@@ -281,14 +383,14 @@ $reg.Clean.Add_Click({
   }
   $reg.Status.Text = "Removed $ok entries. Backup saved."; $reg.Scan.Enabled = $true; $reg.Clean.Enabled = ($reg.List.Items.Count -gt 0); $form.Cursor='Default'
   $rpMsg = if ($rp) { "`n`nA System Restore point named 'CleanSweep - before registry cleaning' was created." } else { "" }
-  [void][Windows.Forms.MessageBox]::Show("Removed $ok registry entries.`n`nBackup file:`n$bk$rpMsg","CleanSweep","OK","Information")
+  [void][CSMsg]::Show("Removed $ok registry entries.`n`nBackup file:`n$bk$rpMsg","CleanSweep","OK","Information")
 })
 $restore.Add_Click({
   $dlg = New-Object Windows.Forms.OpenFileDialog -Property @{Filter="Registry backups (*.reg)|*.reg"; InitialDirectory=$backupDir}
   if ($dlg.ShowDialog() -ne "OK") { return }
   & reg.exe import $dlg.FileName 2>$null | Out-Null
   $msg = if ($LASTEXITCODE -eq 0) { "Backup restored." } else { "Some entries could not be restored." }
-  [void][Windows.Forms.MessageBox]::Show($msg,"CleanSweep","OK","Information")
+  [void][CSMsg]::Show($msg,"CleanSweep","OK","Information")
 })
 
 # ================================================================ 3. BROKEN SHORTCUTS
@@ -323,7 +425,7 @@ $sc.Scan.Add_Click({
 })
 $sc.Clean.Add_Click({
   $sel = @($sc.List.Items | Where-Object Checked); if (-not $sel) { return }
-  if ([Windows.Forms.MessageBox]::Show("Move $($sel.Count) broken shortcuts to the Recycle Bin?","Confirm","YesNo","Warning") -ne "Yes") { return }
+  if ([CSMsg]::Show("Move $($sel.Count) broken shortcuts to the Recycle Bin?","Confirm","YesNo","Warning") -ne "Yes") { return }
   $form.Cursor='WaitCursor'; $ok = 0
   foreach ($i in $sel) {
     try { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($i.Tag, 'OnlyErrorDialogs', 'SendToRecycleBin'); $sc.List.Items.Remove($i); $ok++ }
@@ -461,8 +563,8 @@ $wifi.Clean.Add_Click({
   $sel = @($wifi.List.Items | Where-Object Checked | ForEach-Object Text)
   if (-not $sel -and $dnsBox.SelectedIndex -eq 0) { return }
   $a = Get-NetTarget
-  if (-not $a) { [void][Windows.Forms.MessageBox]::Show("No $($script:NetKind) adapter was found.","CleanSweep","OK","Warning"); return }
-  if ([Windows.Forms.MessageBox]::Show("Apply the selected $($script:NetKind) optimizations?`n`nYour connection may drop for a few seconds.","Confirm","YesNo","Question") -ne "Yes") { return }
+  if (-not $a) { [void][CSMsg]::Show("No $($script:NetKind) adapter was found.","CleanSweep","OK","Warning"); return }
+  if ([CSMsg]::Show("Apply the selected $($script:NetKind) optimizations?`n`nYour connection may drop for a few seconds.","Confirm","YesNo","Question") -ne "Yes") { return }
   Set-Busy $wifi $true; $script:restart = $false; $script:ethChanged = $false
   function Step($name, [scriptblock]$action) { $wifi.Status.Text = "$name..."; [Windows.Forms.Application]::DoEvents(); try { & $action; $script:done += $name } catch {} }
   $script:done = @()
@@ -505,7 +607,7 @@ $wifi.Clean.Add_Click({
   } catch { $wifi.Status.Text = "Optimizations applied." }
   if ($script:restart) { $msg += "`n`nRestart your PC to finish the network stack reset." }
   Set-Busy $wifi $false; $wifi.Clean.Enabled = $true
-  [void][Windows.Forms.MessageBox]::Show($msg,"Network Optimizer","OK","Information")
+  [void][CSMsg]::Show($msg,"Network Optimizer","OK","Information")
 })
 
 # Nearby networks: shows which channels are crowded
@@ -513,7 +615,7 @@ $nearBtn.Add_Click({
   $form.Cursor = 'WaitCursor'
   $nets = @(); $ssid = ""; $cur = $null
   $out = netsh wlan show networks mode=bssid 2>$null
-  if (($out -join " ") -match 'location permission|location services') { $form.Cursor = 'Default'; [void][Windows.Forms.MessageBox]::Show($LocationHelp,"Nearby networks","OK","Information"); return }
+  if (($out -join " ") -match 'location permission|location services') { $form.Cursor = 'Default'; [void][CSMsg]::Show($LocationHelp,"Nearby networks","OK","Information"); return }
   foreach ($line in $out) {
     if ($line -match '^SSID \d+ : (.*)$') { $ssid = $matches[1].Trim(); if (-not $ssid) { $ssid = "(hidden)" } }
     elseif ($line -match '^\s+BSSID \d+') { $cur = [ordered]@{ SSID=$ssid; Signal=""; Channel=""; Band="" }; $nets += $cur }
@@ -536,6 +638,183 @@ $nearBtn.Add_Click({
   $dlg.Controls.Add($lv); $dlg.Controls.Add($tipL)
   [void]$dlg.ShowDialog($form)
 })
+# ---------------------------------------------------------------- Ethernet diagnostics
+# Each check adds a row: area, result text, status (OK / Warning / Problem / Info) and a tip
+function Invoke-EthDiagnostics {
+  $rows = New-Object System.Collections.Generic.List[object]
+  function Add-Row($area, $result, $status, $tip = "") { $rows.Add([pscustomobject]@{Area=$area; Result=$result; Status=$status; Tip=$tip}) }
+  function Progress($t) { $wifi.Status.Text = "Diagnosing: $t..."; Check-Cancel }
+
+  $a = Get-EthAdapter
+  if (-not $a) { Add-Row "Ethernet adapter" "No Ethernet port found" "Problem" "This PC has no wired network adapter, or its driver isn't installed. A USB Ethernet adapter can add one."; return $rows }
+
+  # 1. Adapter and driver
+  Progress "adapter and driver"
+  $drvDate = $null; try { $drvDate = [datetime]$a.DriverDate } catch {}
+  $age = if ($drvDate) { [int](((Get-Date) - $drvDate).TotalDays / 365) } else { $null }
+  $drvText = "$($a.InterfaceDescription), driver $($a.DriverVersion)" + $(if ($drvDate) { " (" + $drvDate.ToString("MMM yyyy") + ")" } else { "" })
+  if ($age -ge 3) { Add-Row "Adapter driver" $drvText "Warning" "The driver is about $age years old. Check your laptop maker's support site or Windows Update > Advanced options > Optional updates for a newer network driver." }
+  else { Add-Row "Adapter driver" $drvText "OK" }
+  if ($a.AdminStatus -ne 'Up') { Add-Row "Adapter enabled" "The adapter is disabled in Windows" "Problem" "Turn it on in Settings > Network & internet > Advanced network settings."; return $rows }
+
+  # 2. Cable / link
+  Progress "cable and link"
+  if ($a.Status -ne 'Up') {
+    Add-Row "Cable connection" "No link detected ($($a.MediaConnectionState))" "Problem" "Check the cable is clicked in at both ends, try a different cable and a different router port. The port lights should blink when connected."
+    return $rows
+  }
+  Add-Row "Cable connection" "Connected" "OK"
+  $mbps = [int]([double]$a.ReceiveLinkSpeed / 1e6)
+  $maxMbps = $null
+  $sd = Get-NetAdapterAdvancedProperty -Name $a.Name -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'Speed.*Duplex|Link Speed|Connection Type' } | Select-Object -First 1
+  if ($sd) {
+    $speeds = $sd.ValidDisplayValues | ForEach-Object { if ($_ -match '(\d+(?:\.\d+)?)\s*(G|M)bps') { [double]$matches[1] * $(if ($matches[2] -eq 'G') { 1000 } else { 1 }) } }
+    if ($speeds) { $maxMbps = [int](($speeds | Measure-Object -Maximum).Maximum) }
+  }
+  $spTxt = "$($a.LinkSpeed)" + $(if ($maxMbps) { " (adapter supports up to " + $(if ($maxMbps -ge 1000) { "$($maxMbps/1000) Gbps" } else { "$maxMbps Mbps" }) + ")" } else { "" })
+  if ($maxMbps -and $mbps -lt $maxMbps -and $mbps -le 100) { Add-Row "Link speed" $spTxt "Problem" "Your connection negotiated far below what the adapter supports. Usually a damaged or old (Cat5) cable, a bent connector pin, or a 100 Mbps router/switch port. Try a Cat5e or Cat6 cable and another port." }
+  elseif ($maxMbps -and $mbps -lt $maxMbps) { Add-Row "Link speed" $spTxt "Warning" "Running below the adapter's maximum. This is normal if your router or switch port is slower; otherwise try another cable or port." }
+  else { Add-Row "Link speed" $spTxt "OK" }
+  if ($a.FullDuplex) { Add-Row "Duplex" "Full duplex" "OK" } else { Add-Row "Duplex" "Half duplex" "Problem" "Half duplex causes collisions and slowdowns. Usually a cable fault or a forced speed setting - see the Speed & Duplex check." }
+  if ($sd) {
+    if ($sd.DisplayValue -match 'Auto') { Add-Row "Speed & Duplex setting" $sd.DisplayValue "OK" }
+    else { Add-Row "Speed & Duplex setting" "Forced to '$($sd.DisplayValue)'" "Warning" "A forced speed can mismatch the router. Set it back to Auto Negotiation in Device Manager > Network adapters > your adapter > Advanced." }
+  }
+
+  # 3. Error counters (bad cables and interference show up here)
+  Progress "packet errors"
+  $st = Get-NetAdapterStatistics -Name $a.Name -ErrorAction SilentlyContinue
+  if ($st) {
+    $pk = [double]($st.ReceivedUnicastPackets + $st.ReceivedMulticastPackets + $st.ReceivedBroadcastPackets + $st.SentUnicastPackets + $st.SentMulticastPackets + $st.SentBroadcastPackets)
+    $err = [double]($st.ReceivedPacketErrors + $st.OutboundPacketErrors)
+    $disc = [double]($st.ReceivedDiscardedPackets + $st.OutboundDiscardedPackets)
+    $rate = if ($pk -gt 0) { $err / $pk * 100 } else { 0 }
+    $txt = "{0:N0} packets, {1:N0} errors ({2:N3}%), {3:N0} discarded since the adapter started" -f $pk, $err, $rate, $disc
+    if ($rate -ge 0.1) { Add-Row "Packet errors" $txt "Problem" "A high error rate almost always means a faulty cable, connector or port. Replace the cable first." }
+    elseif ($err -gt 0) { Add-Row "Packet errors" $txt "Warning" "A few errors is normal-ish; if the number keeps climbing, try another cable." }
+    else { Add-Row "Packet errors" $txt "OK" }
+  }
+
+  # 4. Link drops in the last 7 days (from the driver's event log entries)
+  Progress "link drops"
+  $svc = $a.DriverName -replace '\.sys$','' -replace '^.*\\',''
+  $drops = 0
+  try {
+    $drops = @(Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 5000 -ErrorAction Stop |
+      Where-Object { ($_.ProviderName -eq $svc -or $_.ProviderName -match 'e1\w*express|rt\w*64|Netwtw|e2f|killer') -and $_.Message -match 'link.*(down|disconnect)|disconnected|lost' }).Count
+  } catch {}
+  if ($drops -ge 5) { Add-Row "Link drops (7 days)" "$drops disconnects" "Problem" "The cable connection keeps dropping. Try another cable/port, and turn off Ethernet power saving with Optimize." }
+  elseif ($drops -gt 0) { Add-Row "Link drops (7 days)" "$drops disconnects" "Warning" "Occasional drops can be sleep/unplugging. If you didn't cause them, check the cable." }
+  else { Add-Row "Link drops (7 days)" "None recorded" "OK" }
+
+  # 5. IP configuration
+  Progress "IP address"
+  $ip = Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
+  $cfg = Get-NetIPConfiguration -InterfaceIndex $a.ifIndex -ErrorAction SilentlyContinue
+  $gw = $cfg.IPv4DefaultGateway.NextHop | Select-Object -First 1
+  if (-not $ip) { Add-Row "IP address" "None" "Problem" "Windows has no IPv4 address. Try Renew IP address in Optimize, or restart the router." }
+  elseif ($ip.IPAddress -like '169.254.*') { Add-Row "IP address" "$($ip.IPAddress) (self-assigned)" "Problem" "The router didn't give this PC an address (DHCP failed). Restart the router, then use Renew IP address." }
+  else { $how = if ($ip.PrefixOrigin -eq 'Dhcp') { "DHCP (automatic)" } else { "manual setting" }; Add-Row "IP address" "$($ip.IPAddress)/$($ip.PrefixLength) via $how" "OK" }
+  $v6 = Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue | Where-Object { $_.PrefixOrigin -ne 'WellKnown' -and $_.IPAddress -notlike 'fe80*' }
+  Add-Row "IPv6" $(if ($v6) { "Available" } else { "Not available (IPv4 only)" }) "Info"
+
+  # 6. Router (gateway) latency - on a cable this should be about 1 ms
+  if ($gw) {
+    Progress "router latency"
+    $t = @(); $lost = 0
+    foreach ($n in 1..10) { Check-Cancel; $r = Test-Connection -ComputerName $gw -Count 1 -ErrorAction SilentlyContinue; if ($r) { $t += [int]$r.ResponseTime } else { $lost++ } }
+    if (-not $t) { Add-Row "Router ($gw)" "No reply" "Warning" "Some routers ignore pings. If websites also fail, restart the router." }
+    else {
+      $avg = [int](($t | Measure-Object -Average).Average); $mx = ($t | Measure-Object -Maximum).Maximum
+      $txt = "Average $avg ms, worst $mx ms, loss $($lost*10)%"
+      if ($lost -gt 0 -or $avg -gt 5) { Add-Row "Router ($gw)" $txt "Problem" "A wired link to the router should be about 1 ms with no loss. Suspect the cable, a switch in between, or an overloaded router." }
+      elseif ($mx -gt 10) { Add-Row "Router ($gw)" $txt "Warning" "Occasional spikes. Could be router load or a background download." }
+      else { Add-Row "Router ($gw)" $txt "OK" }
+    }
+  } else { Add-Row "Router" "No default gateway" "Problem" "Windows doesn't know where the router is. Renew IP address or restart the router." }
+
+  # 7. DNS
+  Progress "DNS"
+  $dnsSrv = (Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses
+  try { Clear-DnsClientCache; $ms = [int](Measure-Command { Resolve-DnsName www.microsoft.com -DnsOnly -ErrorAction Stop | Out-Null }).TotalMilliseconds
+    $txt = "$ms ms using " + ($dnsSrv -join ", ")
+    if ($ms -gt 150) { Add-Row "DNS lookup" $txt "Warning" "Slow DNS makes every new website feel slow. Try Cloudflare in the DNS server box, then Optimize." } else { Add-Row "DNS lookup" $txt "OK" }
+  } catch { Add-Row "DNS lookup" "Failed using $($dnsSrv -join ', ')" "Problem" "Websites can't be found. Switch DNS to Cloudflare or Automatic and Optimize." }
+
+  # 8. Internet
+  Progress "internet"
+  $t = @(); $lost = 0
+  foreach ($n in 1..10) { Check-Cancel; $r = Test-Connection -ComputerName 1.1.1.1 -Count 1 -ErrorAction SilentlyContinue; if ($r) { $t += [int]$r.ResponseTime } else { $lost++ } }
+  if ($t) {
+    $avg = [int](($t | Measure-Object -Average).Average)
+    $jit = if ($t.Count -gt 1) { [int](((1..($t.Count-1)) | ForEach-Object { [math]::Abs($t[$_]-$t[$_-1]) } | Measure-Object -Average).Average) } else { 0 }
+    $txt = "Ping $avg ms, jitter $jit ms, loss $($lost*10)%"
+    if ($lost -ge 20 -or $avg -gt 100) { Add-Row "Internet" $txt "Problem" "If the router checks above are OK, this usually points to your internet provider or modem." }
+    elseif ($lost -gt 0 -or $jit -gt 20 -or $avg -gt 50) { Add-Row "Internet" $txt "Warning" "Some lag or jitter. Can be busy network, provider congestion, or other devices downloading." }
+    else { Add-Row "Internet" $txt "OK" }
+  } else { Add-Row "Internet" "No reply from 1.1.1.1" "Problem" "The internet isn't reachable. Restart the modem/router; if it continues, contact your provider." }
+  try { $w = Invoke-WebRequest "http://www.msftconnecttest.com/connecttest.txt" -UseBasicParsing -TimeoutSec 6 -ErrorAction Stop
+    if ($w.Content -match 'Microsoft Connect Test') { Add-Row "Web access" "Working" "OK" } else { Add-Row "Web access" "Redirected" "Warning" "Something is intercepting web traffic (a sign-in page, filter or proxy)." }
+  } catch { Add-Row "Web access" "Failed" "Problem" "Web pages can't load. Check proxy/VPN settings or firewall software." }
+
+  # 9. MTU - largest packet that passes without being split
+  Progress "packet size (MTU)"
+  $lo = 1200; $hi = 1472; $best = $null
+  if ((& ping.exe -n 1 -w 1500 -f -l $lo 1.1.1.1 | Out-String) -match 'TTL=') {
+    while ($lo -le $hi) { Check-Cancel; $mid = [int](($lo + $hi) / 2)
+      if ((& ping.exe -n 1 -w 1500 -f -l $mid 1.1.1.1 | Out-String) -match 'TTL=') { $best = $mid; $lo = $mid + 1 } else { $hi = $mid - 1 } }
+  }
+  if ($best) { $mtu = $best + 28
+    if ($mtu -ge 1500) { Add-Row "MTU" "1500 (standard)" "OK" }
+    else { Add-Row "MTU" "$mtu" "Info" "Your connection carries slightly smaller packets than standard (common with DSL/PPPoE or VPNs). Windows usually handles this automatically." } }
+  else { Add-Row "MTU" "Could not measure" "Info" }
+
+  # 10. Is Windows actually using the cable?
+  Progress "route preference"
+  $route = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction SilentlyContinue | Sort-Object { $_.RouteMetric + (Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).InterfaceMetric } | Select-Object -First 1
+  if ($route -and $route.ifIndex -eq $a.ifIndex) { Add-Row "Internet traffic uses" "Ethernet" "OK" }
+  elseif ($route) { $other = (Get-NetAdapter -InterfaceIndex $route.ifIndex -ErrorAction SilentlyContinue).Name
+    Add-Row "Internet traffic uses" "$other (not Ethernet)" "Warning" "Windows is sending traffic over $other instead of the cable. Turn off Wi-Fi or VPN while wired, or lower the Ethernet interface metric." }
+
+  # 11. Power saving still enabled?
+  $ps = Get-NetAdapterAdvancedProperty -Name $a.Name -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'Energy.?Efficient|Green Ethernet|Power Saving Mode|Advanced EEE' -and $_.DisplayValue -notmatch '^(Disabled|Off)$' }
+  if ($ps) { Add-Row "Ethernet power saving" ("On: " + ($ps.DisplayName -join ", ")) "Warning" "Can add small delays or drops. Tick 'Ethernet power saving off' and click Optimize." }
+  else { Add-Row "Ethernet power saving" "Off" "OK" }
+  return $rows
+}
+
+function Show-DiagReport($rows) {
+  $dlg = New-Object Windows.Forms.Form -Property @{Text="Ethernet diagnostics"; Size='900,560'; StartPosition='CenterParent'; Font=$form.Font; Icon=$form.Icon}
+  $lv = New-Object Windows.Forms.ListView -Property @{View='Details'; FullRowSelect=$true; Dock='Fill'}
+  foreach ($c in @(@("Check",190),@("Result",420),@("Status",90))) { [void]$lv.Columns.Add($c[0],$c[1]) }
+  $colors = @{ OK='ForestGreen'; Warning='DarkOrange'; Problem='Firebrick'; Info='DimGray' }
+  foreach ($r in $rows) { $it = $lv.Items.Add($r.Area); [void]$it.SubItems.Add($r.Result); [void]$it.SubItems.Add($r.Status)
+    $it.UseItemStyleForSubItems = $false; $it.SubItems[2].ForeColor = [Drawing.Color]::FromName($colors[$r.Status]); $it.Tag = $r }
+  $tip = New-Object Windows.Forms.TextBox -Property @{Dock='Bottom'; Height=80; Multiline=$true; ReadOnly=$true; ScrollBars='Vertical'}
+  $bad = @($rows | Where-Object { $_.Status -in 'Problem','Warning' })
+  $tip.Text = if ($bad) { "Found $(@($rows | Where-Object Status -eq 'Problem').Count) problem(s) and $(@($rows | Where-Object Status -eq 'Warning').Count) warning(s). Click a row to see what to do." } else { "Everything looks healthy." }
+  $lv.Add_SelectedIndexChanged({ if ($lv.SelectedItems.Count) { $r = $lv.SelectedItems[0].Tag; $tip.Text = if ($r.Tip) { $r.Tip } else { "No action needed." } } }.GetNewClosure())
+  $bar = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Bottom'; AutoSize=$true; Padding='6,6,6,6'}
+  $copy = New-Object Windows.Forms.Button -Property @{Text="Copy report"; AutoSize=$true; MinimumSize='120,34'}
+  $save = New-Object Windows.Forms.Button -Property @{Text="Save report..."; AutoSize=$true; MinimumSize='120,34'}
+  $report = "CleanSweep Ethernet diagnostics - " + (Get-Date).ToString("yyyy-MM-dd HH:mm") + "`r`n`r`n" + (($rows | ForEach-Object { "[$($_.Status)] $($_.Area): $($_.Result)" + $(if ($_.Tip -and $_.Status -ne 'OK') { "`r`n    Tip: $($_.Tip)" } else { "" }) }) -join "`r`n")
+  $copy.Add_Click({ [Windows.Forms.Clipboard]::SetText($report); $tip.Text = "Report copied to the clipboard." }.GetNewClosure())
+  $save.Add_Click({ $sd = New-Object Windows.Forms.SaveFileDialog -Property @{Filter="Text file (*.txt)|*.txt"; FileName="Ethernet diagnostics.txt"}
+    if ($sd.ShowDialog() -eq 'OK') { Set-Content -LiteralPath $sd.FileName -Value $report -Encoding UTF8; $tip.Text = "Saved to $($sd.FileName)" } }.GetNewClosure())
+  $bar.Controls.AddRange(@($copy, $save))
+  $dlg.Controls.Add($lv); $dlg.Controls.Add($tip); $dlg.Controls.Add($bar)
+  [void]$dlg.ShowDialog($form)
+}
+
+$diagBtn = New-Object Windows.Forms.Button -Property @{Text="Ethernet diagnostics"; AutoSize=$true; MinimumSize='170,36'; Margin='0,0,8,0'}
+$wifi.Extra.Controls.Add($diagBtn)
+$diagBtn.Enabled = ($script:NetKind -eq "Ethernet")
+$connBox.Add_SelectedIndexChanged({ $diagBtn.Enabled = ($script:NetKind -eq "Ethernet") })
+$diagBtn.Add_Click({
+  Set-Busy $wifi $true
+  try { $rows = Invoke-EthDiagnostics; $wifi.Status.Text = "Diagnostics finished."; Set-Busy $wifi $false; $wifi.Clean.Enabled = $true; Show-DiagReport $rows }
+  catch { Set-Busy $wifi $false; $wifi.Clean.Enabled = $true; $wifi.Status.Text = "Diagnostics cancelled." }
+})
 $tabs.Add_SelectedIndexChanged({ if ($tabs.SelectedTab -eq $wifi.Page) { Update-WifiInfo } })
 
 # ================================================================ 5. UPDATES
@@ -554,7 +833,7 @@ function Save-Settings {
   New-Item -ItemType Directory -Path $AppDir -Force | Out-Null
   [pscustomobject]$settings | ConvertTo-Json | Set-Content -LiteralPath $settingsFile -Encoding UTF8
 }
-function Say($msg, $icon = "Information") { [void][Windows.Forms.MessageBox]::Show($msg, "CleanSweep Updates", "OK", $icon) }
+function Say($msg, $icon = "Information") { [void][CSMsg]::Show($msg, "CleanSweep Updates", "OK", $icon) }
 
 function Install-Update($m) {
   $upd.Status.Text = "Downloading CleanSweep $($m.version)..."; $form.Cursor = 'WaitCursor'; $form.Refresh()
@@ -590,7 +869,7 @@ function Check-Update([bool]$manual) {
   try { $newer = ([version]$m.version -gt [version]$Version) } catch { $newer = $false }
   if (-not $newer) { $upd.Status.Text = "You have the latest version ($Version)."; if ($manual) { Say "You have the latest version of CleanSweep ($Version)." }; return }
   $upd.Status.Text = "Version $($m.version) is available."
-  $ans = [Windows.Forms.MessageBox]::Show("CleanSweep $($m.version) is available. You have $Version.`n`nWhat's new:`n$($m.notes)`n`nInstall it now? CleanSweep will restart.", "CleanSweep Updates", "YesNo", "Question")
+  $ans = [CSMsg]::Show("CleanSweep $($m.version) is available. You have $Version.`n`nWhat's new:`n$($m.notes)`n`nInstall it now? CleanSweep will restart.", "CleanSweep Updates", "YesNo", "Question")
   if ($ans -eq "Yes") { Install-Update $m }
 }
 
@@ -610,9 +889,10 @@ $upd.Page.Controls.Add($updFlow)
 $tabs.TabPages.Add($upd.Page)
 
 $form.Add_Shown({
+  if ($TestMode) { return }
   $due = $true
   if ($settings.LastCheck) { try { $due = ((Get-Date) - [datetime]$settings.LastCheck).TotalHours -ge 24 } catch {} }
   if ($settings.AutoCheck -and $due) { Check-Update $false }
 })
 
-[void]$form.ShowDialog()
+if (-not $TestMode) { [void]$form.ShowDialog() }

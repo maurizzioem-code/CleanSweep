@@ -1,0 +1,47 @@
+name: Build and test on Windows
+on:
+  workflow_dispatch:
+  push:
+    paths: ["app/**", "launcher/**", "tests/**", ".github/workflows/**"]
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build CleanSweep.exe
+        shell: powershell
+        run: .\launcher\build-exe.ps1 -Out dist
+      - name: Syntax check (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          foreach ($f in Get-ChildItem app -Recurse -Filter *.ps1) {
+            $e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$e)
+            if ($e) { $e | ForEach-Object { Write-Host "::error file=$($f.Name),line=$($_.Extent.StartLineNumber)::$($_.Message)" }; exit 1 } else { "OK $($f.Name)" }
+          }
+      - name: Functional and layout tests
+        shell: powershell
+        run: .\tests\Test-CleanSweep.ps1 -Out test-output
+      - name: Test the exe (install, shortcuts, launch)
+        shell: powershell
+        run: |
+          $o = "test-output"; Remove-Item "$env:LOCALAPPDATA\CleanSweep" -Recurse -Force -ErrorAction SilentlyContinue
+          $p = Start-Process .\dist\CleanSweep.exe -PassThru; $p.WaitForExit(60000) | Out-Null
+          "exe exit code: $($p.ExitCode)" | Tee-Object -Append "$o\exe.txt"
+          Start-Sleep 20
+          Get-ChildItem "$env:LOCALAPPDATA\CleanSweep" -Recurse | ForEach-Object { "file: $($_.FullName.Replace($env:LOCALAPPDATA,''))" } | Tee-Object -Append "$o\exe.txt"
+          foreach ($l in "$([Environment]::GetFolderPath('Desktop'))\CleanSweep.lnk", "$([Environment]::GetFolderPath('Programs'))\CleanSweep.lnk") {
+            if (Test-Path $l) { $s = (New-Object -ComObject WScript.Shell).CreateShortcut($l); "shortcut OK: $l -> $($s.TargetPath)" } else { "shortcut MISSING: $l" } } | Tee-Object -Append "$o\exe.txt"
+          $run = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object CommandLine -like "*CleanSweep.ps1*"
+          "app process running: $([bool]$run)" | Tee-Object -Append "$o\exe.txt"
+          $w = Get-Process | Where-Object { $_.MainWindowTitle -like "CleanSweep*" } | Select-Object -First 1
+          "app window: $($w.MainWindowTitle)" | Tee-Object -Append "$o\exe.txt"
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp = New-Object Drawing.Bitmap $b.Width, $b.Height
+          try { [Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size); $bmp.Save("$o\exe-screen.png") } catch { "screen capture failed: $_" | Tee-Object -Append "$o\exe.txt" }
+          $run | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: test-output, path: test-output }
+      - uses: actions/upload-artifact@v4
+        with: { name: CleanSweep-exe, path: dist/CleanSweep.exe }

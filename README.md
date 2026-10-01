@@ -4,6 +4,7 @@ A Windows 11 style PC health app: a dark dashboard with a health score, live har
 
 ## Features
 - **Dashboard**: health score out of 100 with recommendations, score history, live CPU / memory / GPU / disk / network graphs, battery and temperatures, and one-click actions (Quick clean, Free up space, Repair Windows, Optimize drives, Network check, Restore point).
+- **Automatic cleanup**: schedule junk cleaning daily, weekly or every 4 weeks with Windows Task Scheduler. You choose what gets cleaned; files changed in the last 24 hours are skipped, and Recycle Bin items are only removed once they are older than the age you pick. Turning it off removes the task.
 - **Junk Files**: temp files, caches, Windows Update leftovers and Recycle Bin on any drive.
 - **Drives**: every volume with a checkbox (hidden Windows partitions are shown but protected); clean junk, find large files, check for errors (`chkdsk /scan`), optimize (TRIM / defrag).
 - **Repair**: DISM, System File Checker and Windows Update repair (with undo), live output and logs.

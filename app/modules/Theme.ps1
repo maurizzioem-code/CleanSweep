@@ -87,7 +87,7 @@ function New-Card([string]$dock = 'Fill', [string]$pad = '16,14,16,14') {
 }
 
 # Cached fonts for painting (avoid creating GDI objects on every repaint)
-$F = @{ Hdr=(UiFont 9 'Bold'); Nav=(UiFont 10); NavIcon=(IconFont 13) }
+$CSFonts = @{ Hdr=(UiFont 9 'Bold'); Nav=(UiFont 10); NavIcon=(IconFont 13) }
 $script:PrimaryButtons = New-Object System.Collections.Generic.List[object]
 function Set-Primary($b) { $script:PrimaryButtons.Add($b) }
 
@@ -121,7 +121,7 @@ function Style-ListView($lv) {
   $lv.Add_DrawColumnHeader({ param($s, $e)
     $b = New-Object Drawing.SolidBrush $Theme.Bg; $e.Graphics.FillRectangle($b, $e.Bounds); $b.Dispose()
     $r = $e.Bounds; $r.X += 6; $r.Width -= 6
-    [Windows.Forms.TextRenderer]::DrawText($e.Graphics, $e.Header.Text, $F.Hdr, $r, $Theme.Sub, [Windows.Forms.TextFormatFlags]'VerticalCenter,Left,EndEllipsis')
+    [Windows.Forms.TextRenderer]::DrawText($e.Graphics, $e.Header.Text, $CSFonts.Hdr, $r, $Theme.Sub, [Windows.Forms.TextFormatFlags]'VerticalCenter,Left,EndEllipsis')
   })
   $lv.Add_DrawItem({ param($s, $e) })   # rows are painted cell by cell below
   $lv.Add_DrawSubItem({ param($s, $e)
@@ -206,8 +206,8 @@ function New-NavItem($page, $glyph) {
       $b = New-Object Drawing.SolidBrush $(if ($sel) { $Theme.Card } else { (C '#262626') }); $g.FillPath($b, (Get-RoundPath $r 5)); $b.Dispose()
       if ($sel) { $a = New-Object Drawing.SolidBrush $Theme.Accent; $g.FillPath($a, (Get-RoundPath (New-Object Drawing.Rectangle 8, 12, 3, ($s.Height - 24)) 1)); $a.Dispose() }
     }
-    [Windows.Forms.TextRenderer]::DrawText($g, [string]$t.Glyph, $F.NavIcon, (New-Object Drawing.Rectangle 22, 0, 26, $s.Height), $Theme.Text, [Windows.Forms.TextFormatFlags]'VerticalCenter,HorizontalCenter')
-    [Windows.Forms.TextRenderer]::DrawText($g, $t.Page.Text, $F.Nav, (New-Object Drawing.Rectangle 56, 0, ($s.Width - 60), $s.Height), $Theme.Text, [Windows.Forms.TextFormatFlags]'VerticalCenter,Left,EndEllipsis')
+    [Windows.Forms.TextRenderer]::DrawText($g, [string]$t.Glyph, $CSFonts.NavIcon, (New-Object Drawing.Rectangle 22, 0, 26, $s.Height), $Theme.Text, [Windows.Forms.TextFormatFlags]'VerticalCenter,HorizontalCenter')
+    [Windows.Forms.TextRenderer]::DrawText($g, $t.Page.Text, $CSFonts.Nav, (New-Object Drawing.Rectangle 56, 0, ($s.Width - 60), $s.Height), $Theme.Text, [Windows.Forms.TextFormatFlags]'VerticalCenter,Left,EndEllipsis')
   })
   $p.Add_MouseEnter({ param($s, $e) $s.Tag.Hover = $true; $s.Invalidate() })
   $p.Add_MouseLeave({ param($s, $e) $s.Tag.Hover = $false; $s.Invalidate() })

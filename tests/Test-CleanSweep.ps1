@@ -218,13 +218,19 @@ Step "Drives: optimize" {
   if ($drv.Status.Text -match 'failed|Cancelled') { Write-Error $drv.Status.Text }
 }
 Step "Drives: find large files" {
-  $big = "$env:TEMP\CleanSweepBigTest.bin"; $fs = [IO.File]::Create($big); $fs.SetLength(150MB); $fs.Close()
+  # Use the small data drive when there is one (the runner's C: has millions of files)
+  $other = @($drv.List.Items) | Where-Object { $_.Tag.Letter -and $_.Tag.Letter -ne $SysDrive -and $_.Tag.Media -notmatch 'USB|Removable' } | Select-Object -First 1
+  $root = if ($other) { $other.Tag.Letter + "\CleanSweepTest" } else { $env:TEMP }
+  if ($other) { foreach ($i in $drv.List.Items) { $i.Checked = ($i -eq $other) } }
+  New-Item -ItemType Directory $root -Force | Out-Null
+  $big = "$root\CleanSweepBigTest.bin"; $fs = [IO.File]::Create($big); $fs.SetLength(150MB); $fs.Close()
   $drv.Large.PerformClick(); Note "    $($drv.Status.Text)"
   foreach ($x in ($script:LargeFiles | Sort-Object Size -Descending | Select-Object -First 5)) { Note "      $(Fmt $x.Size)  $($x.Path)" }
   if (-not ($script:LargeFiles | Where-Object Name -eq 'CleanSweepBigTest.bin')) { Write-Error "Test file not found" }
   $lv = $script:LargeForm.Controls | Where-Object { $_ -is [Windows.Forms.ListView] }
   $it = @($lv.Items) | Where-Object { $_.Tag.Name -eq 'CleanSweepBigTest.bin' } | Select-Object -First 1; $it.Checked = $true
   ($script:LargeForm.Controls | Where-Object { $_ -is [Windows.Forms.FlowLayoutPanel] }).Controls[1].PerformClick()
+  [Windows.Forms.Application]::DoEvents(); $script:LargeForm.Close()
   Note "    after Recycle Bin: test file exists = $(Test-Path $big)"; if (Test-Path $big) { Write-Error "File not moved"; Remove-Item $big -Force }
 }
 Step "Drives: Clean junk on ticked drives" { $drv.Junk.PerformClick(); Note "    tab: $($tabs.SelectedTab.Text)  junk drives: $((Get-SelectedDrives) -join ',')  $($junk.Status.Text)" }

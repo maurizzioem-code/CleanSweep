@@ -286,10 +286,27 @@ function Update-TileLayout {
   for ($i = 0; $i -lt $rows; $i++) { [void]$grid.RowStyles.Add((New-Object Windows.Forms.RowStyle 'Percent', (100 / $rows))) }
   for ($i = 0; $i -lt 6; $i++) { $grid.Controls.Add($dash.Tiles[$script:TileOrder[$i]].Panel, ($i % $cols), [math]::Floor($i / $cols)) }
   $grid.ResumeLayout()
-  $row1.Height = if ($cols -eq 2) { 330 } else { 250 }
+}
+# Wide windows: score and actions side by side. Narrow (laptop) windows: stacked, so tiles keep readable titles
+$script:Row1Stack = $null
+function Update-Row1 {
+  $stack = $row1.Width -lt 980
+  if ($stack -eq $script:Row1Stack) { return }; $script:Row1Stack = $stack
+  $row1.SuspendLayout(); $row1.Controls.Clear(); $row1.ColumnStyles.Clear(); $row1.RowStyles.Clear()
+  if ($stack) {
+    $row1.ColumnCount = 1; $row1.RowCount = 2; [void]$row1.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Percent', 100))
+    [void]$row1.RowStyles.Add((New-Object Windows.Forms.RowStyle 'Absolute', 236)); [void]$row1.RowStyles.Add((New-Object Windows.Forms.RowStyle 'Absolute', 250))
+    $row1.Controls.Add($health, 0, 0); $row1.Controls.Add($acts, 0, 1); $row1.Height = 486
+  } else {
+    $row1.ColumnCount = 2; $row1.RowCount = 1
+    [void]$row1.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Absolute', 380)); [void]$row1.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Percent', 100))
+    [void]$row1.RowStyles.Add((New-Object Windows.Forms.RowStyle 'Percent', 100))
+    $row1.Controls.Add($health, 0, 0); $row1.Controls.Add($acts, 1, 0); $row1.Height = 250
+  }
+  $row1.ResumeLayout()
 }
 $acts.Add_Resize({ Update-TileLayout }); Update-TileLayout
-$row1.Controls.Add($health, 0, 0); $row1.Controls.Add($acts, 1, 0)
+$row1.Add_Resize({ Update-Row1 }); Update-Row1
 
 # ---- row 2: hardware monitoring cards (3 x 2)
 $hwT = New-Lbl "Hardware monitor" (UiFont 11 'Bold') $Theme.Text 'Top' 30
@@ -519,7 +536,7 @@ function Apply-Sample($s) {
     $HW.net.Value.Text = "{0:N1} Mbps" -f ($d.NetDown * 8 / 1MB)
     $HW.net.Sub.Text = "Download {0:N1} Mbps  $([char]0xB7)  Upload {1:N1} Mbps`nLive traffic on all adapters" -f ($d.NetDown * 8 / 1MB), ($d.NetUp * 8 / 1MB); Push 'net' ($d.NetDown * 8 / 1MB)
   }
-  $tempTxt = if ($d.Temps) { ($d.Temps | Select-Object -First 3) -join '  $([char]0xB7)  ' } else { "Temperatures: not reported by this PC" }
+  $tempTxt = if ($d.Temps) { ($d.Temps | Select-Object -First 3) -join ("  " + [char]0xB7 + "  ") } else { "Temperatures: not reported by this PC" }
   if ($null -ne $d.Bat) {
     $HW.bat.Title.Text = "Battery and temperatures"; $HW.bat.Value.Text = "$($d.Bat)%"
     $state = if ($d.BatAC) { "Plugged in" } elseif ($d.BatMin) { "{0}h {1:00}m left" -f [int][math]::Floor($d.BatMin / 60), ($d.BatMin % 60) } else { "On battery" }

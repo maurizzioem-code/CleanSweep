@@ -1,6 +1,6 @@
 {
-  "version": "3.1",
-  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-3.1.zip",
-  "sha256": "CC05C9E0C53BFB3DA2549F3A8076285023ECE4A34DDBFBD9054BAD311BE366CB",
-  "notes": "New Dashboard: a health score out of 100 with recommendations covering storage, drive health, memory, startup apps, security, Windows Update, crashes, devices, battery and internet. Live CPU and memory graphs, score history, and a savable health report. The checks only read your PC - nothing changes unless you click a suggested action."
+  "version": "3.2",
+  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-3.2.zip",
+  "sha256": "0D99A1DD942D5A85D8B6EB4BD48C7230AD6A2FDC51ACB5E7E0CD399CC31B2636",
+  "notes": "New Repair tab: Quick Windows health check, Scan and Repair Windows image (DISM), System File Checker (SFC), Repair Windows Update (with undo) and component cleanup. One-click Recommended repair runs DISM then SFC in Microsoft's order, with live progress, plain-language results and saved logs. A restore point is created first."
 }

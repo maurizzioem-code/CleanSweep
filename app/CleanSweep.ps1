@@ -482,7 +482,7 @@ function Update-WifiInfo {
     $dns = (Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction Ignore).ServerAddresses -join ", "
     $bps = [double]$a.ReceiveLinkSpeed; $mbps = [int]($bps / 1e6)
     $hint = if ($mbps -gt 0 -and $mbps -le 100) { "  - Only 100 Mbps: the cable or router port may be limiting you. Try a Cat5e/Cat6 cable or another port." } else { "" }
-    $duplex = if ($a.FullDuplex) { "Full duplex" } else { "Half duplex (slow - check the cable)" }
+    $duplex = if ($a.FullDuplex) { "Full duplex" } elseif ($mbps -gt 1000) { "" } else { "Half duplex (slow - check the cable)" }
     $wifiInfo.Text = "Ethernet adapter: $($a.InterfaceDescription)`n" +
       "Link speed: $($a.LinkSpeed)     $duplex$hint`n" +
       "Adapter name: $($a.Name)     DNS: $dns"
@@ -710,7 +710,8 @@ function Invoke-EthDiagnostics {
   $isPhysical = [bool](Get-NetAdapter -Physical -ErrorAction Ignore | Where-Object ifIndex -eq $a.ifIndex)
   if (-not $isPhysical) { Add-Row "Duplex" "Not reported (virtual or bridged adapter)" "Info" }
   elseif ($a.FullDuplex) { Add-Row "Duplex" "Full duplex" "OK" }
-  elseif ($mbps -gt 1000) { Add-Row "Duplex" "Not reported by this adapter" "Info" }   # multi-gigabit links are always full duplex else { Add-Row "Duplex" "Half duplex" "Problem" "Half duplex causes collisions and slowdowns. Usually a cable fault or a forced speed setting - see the Speed & Duplex check." }
+  elseif ($mbps -gt 1000) { Add-Row "Duplex" "Not reported by this adapter" "Info" }   # multi-gigabit links are always full duplex
+  else { Add-Row "Duplex" "Half duplex" "Problem" "Half duplex causes collisions and slowdowns. Usually a cable fault or a forced speed setting - see the Speed & Duplex check." }
   if ($sd) {
     if ($sd.DisplayValue -match 'Auto') { Add-Row "Speed & Duplex setting" $sd.DisplayValue "OK" }
     else { Add-Row "Speed & Duplex setting" "Forced to '$($sd.DisplayValue)'" "Warning" "A forced speed can mismatch the router. Set it back to Auto Negotiation in Device Manager > Network adapters > your adapter > Advanced." }

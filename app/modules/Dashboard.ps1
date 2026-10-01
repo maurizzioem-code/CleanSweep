@@ -215,12 +215,12 @@ Add-Rows $hdr @($hdrT, $hdrS)
 
 # ---- row 1: health score card + one-click actions card
 $row1 = New-Object Windows.Forms.TableLayoutPanel -Property @{Dock='Top'; Height=250; ColumnCount=2; RowCount=1; Margin='0,0,0,0'; Padding='0,0,0,0'}
-[void]$row1.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Absolute', 400)); [void]$row1.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Percent', 100))
+[void]$row1.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Absolute', 380)); [void]$row1.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Percent', 100))
 [void]$row1.RowStyles.Add((New-Object Windows.Forms.RowStyle 'Percent', 100))
 
 $health = New-Card
 $dash.Score = New-Object Windows.Forms.Label -Property @{Text="--"}   # value holder (the gauge paints it)
-$dash.Gauge = New-Object Windows.Forms.Panel -Property @{Dock='Left'; Width=180}
+$dash.Gauge = New-Object Windows.Forms.Panel -Property @{Dock='Left'; Width=170}
 Set-DoubleBuffered $dash.Gauge
 $GaugeFonts = @{ Num=(DisplayFont 34 'Bold'); Small=(UiFont 9) }
 $dash.Gauge.Add_Paint({ param($s, $e)
@@ -236,14 +236,14 @@ $dash.Gauge.Add_Paint({ param($s, $e)
 })
 $hInfo = New-Object Windows.Forms.Panel -Property @{Dock='Fill'; Padding='12,18,0,0'}
 $dash.Grade  = New-Lbl "Not checked yet" (DisplayFont 16 'Bold') $Theme.Text 'Top' 34
-$dash.Trend  = New-Lbl "" (UiFont 9.5) $Theme.Sub 'Top' 22
+$dash.Trend  = New-Lbl "" (UiFont 9.5) $Theme.Sub 'Top' 40; $dash.Trend.AutoEllipsis = $false
 $dash.Status = New-Lbl "Run a health check to see your score." (UiFont 9.5) $Theme.Sub 'Top' 62
 $dash.Status.AutoEllipsis = $false
 $hBtns = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Bottom'; Height=44; WrapContents=$false}
 $dash.Run = New-Object Windows.Forms.Button -Property @{Text="Run health check"; AutoSize=$true; MinimumSize='150,34'; Margin='0,0,8,0'}
-$dash.Rep = New-Object Windows.Forms.Button -Property @{Text="Save report"; AutoSize=$true; MinimumSize='100,34'; Margin='0,0,0,0'; Enabled=$false}
+$dash.Rep = New-Object Windows.Forms.Button -Property @{Text="Save report"; AutoSize=$true; MinimumSize='110,34'; Dock='Right'; Enabled=$false}
 Set-Primary $dash.Run
-$hBtns.Controls.AddRange(@($dash.Run, $dash.Rep))
+$hBtns.Controls.Add($dash.Run)
 $hInfo.Controls.Add($hBtns); Add-Rows $hInfo @($dash.Grade, $dash.Trend, $dash.Status)
 $health.Controls.Add($hInfo); $health.Controls.Add($dash.Gauge)
 
@@ -251,8 +251,6 @@ $health.Controls.Add($hInfo); $health.Controls.Add($dash.Gauge)
 $acts = New-Card
 $actsT = New-Lbl "One-click actions" (UiFont 11 'Bold') $Theme.Text 'Top' 28
 $grid = New-Object Windows.Forms.TableLayoutPanel -Property @{Dock='Fill'; ColumnCount=3; RowCount=2; Padding='0,4,0,0'}
-foreach ($i in 1..3) { [void]$grid.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Percent', 33.33)) }
-foreach ($i in 1..2) { [void]$grid.RowStyles.Add((New-Object Windows.Forms.RowStyle 'Percent', 50)) }
 $dash.Tiles = @{}; $script:TileOf = @{}
 function New-Tile($key, $glyph, $title, $sub) {
   $t = New-Object Windows.Forms.Panel -Property @{Dock='Fill'; BackColor=$Theme.Tile; Margin='0,0,8,8'; Cursor='Hand'; Padding='12,10,8,6'}
@@ -272,13 +270,25 @@ function New-Tile($key, $glyph, $title, $sub) {
   $dash.Tiles[$key] = @{ Panel=$t; Sub=$ts; Default=$sub }
   $t
 }
-$grid.Controls.Add((New-Tile 'clean'   $Glyph.Clean   "Quick clean"     "Scan and remove junk on $SysDrive"), 0, 0)
-$grid.Controls.Add((New-Tile 'space'   $Glyph.Space   "Free up space"   "Find large files on $SysDrive"), 1, 0)
-$grid.Controls.Add((New-Tile 'repair'  $Glyph.Repair  "Repair Windows"  "DISM + System File Checker"), 2, 0)
-$grid.Controls.Add((New-Tile 'optimize' $Glyph.Speed  "Optimize drives" "TRIM SSDs, defragment HDDs"), 0, 1)
-$grid.Controls.Add((New-Tile 'network' $Glyph.Net     "Network check"   "Test speed, latency and DNS"), 1, 1)
-$grid.Controls.Add((New-Tile 'restore' $Glyph.Restore "Restore point"   "Create a safety snapshot"), 2, 1)
+[void](New-Tile 'clean'   $Glyph.Clean   "Quick clean"     "Scan and remove junk on $SysDrive")
+[void](New-Tile 'space'   $Glyph.Space   "Free up space"   "Find large files on $SysDrive")
+[void](New-Tile 'repair'  $Glyph.Repair  "Repair Windows"  "DISM + System File Checker")
+[void](New-Tile 'optimize' $Glyph.Speed  "Optimize drives" "TRIM SSDs, defragment HDDs")
+[void](New-Tile 'network' $Glyph.Net     "Network check"   "Test speed, latency and DNS")
+[void](New-Tile 'restore' $Glyph.Restore "Restore point"   "Create a safety snapshot")
 $acts.Controls.Add($grid); $acts.Controls.Add($actsT)
+$script:TileOrder = @('clean','space','repair','optimize','network','restore'); $script:TileCols = 0
+function Update-TileLayout {
+  $cols = if ($acts.Width -lt 560) { 2 } else { 3 }
+  if ($cols -eq $script:TileCols) { return }; $script:TileCols = $cols; $rows = [math]::Ceiling(6 / $cols)
+  $grid.SuspendLayout(); $grid.Controls.Clear(); $grid.ColumnStyles.Clear(); $grid.RowStyles.Clear(); $grid.ColumnCount = $cols; $grid.RowCount = $rows
+  for ($i = 0; $i -lt $cols; $i++) { [void]$grid.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle 'Percent', (100 / $cols))) }
+  for ($i = 0; $i -lt $rows; $i++) { [void]$grid.RowStyles.Add((New-Object Windows.Forms.RowStyle 'Percent', (100 / $rows))) }
+  for ($i = 0; $i -lt 6; $i++) { $grid.Controls.Add($dash.Tiles[$script:TileOrder[$i]].Panel, ($i % $cols), [math]::Floor($i / $cols)) }
+  $grid.ResumeLayout()
+  $row1.Height = if ($cols -eq 2) { 330 } else { 250 }
+}
+$acts.Add_Resize({ Update-TileLayout }); Update-TileLayout
 $row1.Controls.Add($health, 0, 0); $row1.Controls.Add($acts, 1, 0)
 
 # ---- row 2: hardware monitoring cards (3 x 2)
@@ -339,7 +349,8 @@ $recBottom = New-Object Windows.Forms.Panel -Property @{Dock='Bottom'; Height=50
 $dash.Do = New-Object Windows.Forms.Button -Property @{Text="Do suggested action"; AutoSize=$true; MinimumSize='170,34'; Dock='Right'; Enabled=$false}
 Set-Primary $dash.Do
 $dash.Advice = New-Lbl "Select a finding to see what to do." (UiFont 9.5) $Theme.Sub 'Fill' 0; $dash.Advice.AutoEllipsis = $false
-$recBottom.Controls.Add($dash.Advice); $recBottom.Controls.Add($dash.Do)
+$recGap = New-Object Windows.Forms.Panel -Property @{Dock='Right'; Width=8}
+$recBottom.Controls.Add($dash.Advice); $recBottom.Controls.Add($dash.Do); $recBottom.Controls.Add($recGap); $recBottom.Controls.Add($dash.Rep)
 $rec.Controls.Add($dash.List); $rec.Controls.Add($recBottom)
 $dash.HisL = New-Lbl "" (UiFont 9) $Theme.Sub 'Top' 20
 
@@ -496,10 +507,10 @@ function Apply-Sample($s) {
   }
   if ($d.RamTotal) {
     $used = $d.RamTotal - $d.RamFree; $pct = [int]($used / $d.RamTotal * 100)
-    $HW.ram.Value.Text = "$pct%"; $HW.ram.Sub.Text = "$(Fmt $used) of $(Fmt $d.RamTotal) in use`nCommitted $(Fmt $d.Commit)$(if ($HwStatic.RamInfo) { '  $([char]0xB7)  ' + $HwStatic.RamInfo })"; Push 'ram' $pct
+    $HW.ram.Value.Text = "$pct%"; $HW.ram.Sub.Text = ("$(Fmt $used) of $(Fmt $d.RamTotal) in use`nCommitted $(Fmt $d.Commit)" + $(if ($HwStatic.RamInfo) { "  " + [char]0xB7 + "  " + $HwStatic.RamInfo } else { "" })); Push 'ram' $pct
   }
   if ($null -ne $d.Gpu) { $HW.gpu.Value.Text = "$($d.Gpu)%"; Push 'gpu' $d.Gpu } else { $HW.gpu.Value.Text = "n/a" }
-  $HW.gpu.Sub.Text = "$($HwStatic.Gpu)`n$(if ($d.GpuMem) { 'Video memory ' + (Fmt $d.GpuMem) + '  $([char]0xB7)  ' })$($HwStatic.GpuDrv)"
+  $HW.gpu.Sub.Text = "$($HwStatic.Gpu)`n$(if ($d.GpuMem) { 'Video memory ' + (Fmt $d.GpuMem) + '  ' + [char]0xB7 + '  ' })$($HwStatic.GpuDrv)"
   if ($null -ne $d.DiskBusy) {
     $HW.disk.Value.Text = "$($d.DiskBusy)%"
     $HW.disk.Sub.Text = "Read $(Fmt $d.DiskRead)/s  $([char]0xB7)  Write $(Fmt $d.DiskWrite)/s`n$SysDrive $(Fmt $d.SysFree) free of $(Fmt $d.SysSize)"; Push 'disk' $d.DiskBusy

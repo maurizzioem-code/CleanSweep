@@ -6,8 +6,8 @@ $drv = @{}
 $drv.Page   = New-Object Windows.Forms.TabPage -Property @{Text="Drives"; Padding='10,10,10,10'}
 $drv.Status = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=36; TextAlign='MiddleLeft'; Text="Tick the drives you want, then choose an action."; Font=New-Object Drawing.Font("Segoe UI",12,[Drawing.FontStyle]::Bold)}
 $drv.List   = New-Object Windows.Forms.ListView -Property @{View='Details'; CheckBoxes=$true; FullRowSelect=$true; Dock='Fill'; HideSelection=$false}
-foreach ($c in @(@("Volume",190), @("Drive type",120), @("File system",85), @("Status",80), @("Capacity",90), @("Free space",90), @("% Free",60), @("Disk",170))) { [void]$drv.List.Columns.Add($c[0], $c[1]) }
-$drv.Prog   = New-Object Windows.Forms.ProgressBar -Property @{Dock='Bottom'; Height=16; Minimum=0; Maximum=100}
+foreach ($c in @(@("Volume",190), @("Drive type",100), @("File system",85), @("Status",80), @("Capacity",90), @("Free space",90), @("% Free",60), @("Disk",70))) { [void]$drv.List.Columns.Add($c[0], $c[1]) }
+$drv.Prog   = New-Object CSProgress -Property @{Dock='Bottom'; Height=16; Minimum=0; Maximum=100}
 $drv.Out    = New-Object Windows.Forms.TextBox -Property @{Dock='Bottom'; Height=120; Multiline=$true; ReadOnly=$true; ScrollBars='Vertical'; Font=New-Object Drawing.Font("Consolas",9); }
 $drv.Bar    = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Bottom'; AutoSize=$true; AutoSizeMode='GrowAndShrink'; WrapContents=$true; Padding='0,6,0,0'}
 $bp = @{AutoSize=$true; MinimumSize='110,36'; Margin='0,0,8,6'}
@@ -45,7 +45,7 @@ function Get-DriveRows {
       Letter=$letter; Name=$(if ($letter) { "$letter $label" } else { "($label)" }); Media=$(if ($letter -eq $SysDrive) { "$media (boot)" } else { $media })
       FS=$(if ($v) { $v.FileSystem } else { "" }); Health=$(if ($v -and $v.HealthStatus) { "$($v.HealthStatus)" } else { "Healthy" })
       Size=$size; Free=$free; Pct=$(if ($free -ne $null -and $size) { [math]::Round($free / $size * 100) } else { $null })
-      Disk=("Disk {0}{1}" -f $p.DiskNumber, $(if ($dk) { " - " + $dk.FriendlyName } else { "" })); IsSystemPart=(-not $letter) }
+      Disk=("Disk {0}" -f $p.DiskNumber); IsSystemPart=(-not $letter) }
   }
   # Drives without partition info (some USB card readers, network-less removable media)
   foreach ($ld in (Get-CimInstance Win32_LogicalDisk -Filter "DriveType=2 OR DriveType=3" -ErrorAction Ignore | Where-Object { $_.Size -gt 0 })) {

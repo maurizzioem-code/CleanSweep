@@ -9,9 +9,34 @@ public static class CSNative {
   [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int val, int size);
   [DllImport("uxtheme.dll", CharSet=CharSet.Unicode)] public static extern int SetWindowTheme(IntPtr h, string app, string id);
   [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
+  // Undocumented but stable since Windows 10 1809: lets standard controls (scrollbars, menus) use dark mode
+  [DllImport("uxtheme.dll", EntryPoint="#135")] public static extern int SetPreferredAppMode(int mode);
+  [DllImport("uxtheme.dll", EntryPoint="#133")] public static extern bool AllowDarkModeForWindow(IntPtr h, bool allow);
+  [DllImport("uxtheme.dll", EntryPoint="#136")] public static extern void FlushMenuThemes();
+  public static void DarkApp() { try { SetPreferredAppMode(2); FlushMenuThemes(); } catch {} }
+  public static void DarkWindow(IntPtr h, string theme) { try { AllowDarkModeForWindow(h, true); } catch {} SetWindowTheme(h, theme, null); }
 }
-"@
+// Flat dark progress bar (the Windows one can't be recoloured)
+public class CSProgress : System.Windows.Forms.Control {
+  int v, max = 100;
+  public CSProgress() { SetStyle(System.Windows.Forms.ControlStyles.AllPaintingInWmPaint | System.Windows.Forms.ControlStyles.OptimizedDoubleBuffer | System.Windows.Forms.ControlStyles.UserPaint | System.Windows.Forms.ControlStyles.ResizeRedraw, true); }
+  public int Minimum { get; set; }
+  public int Maximum { get { return max; } set { max = Math.Max(1, value); Invalidate(); } }
+  public int Value { get { return v; } set { v = Math.Max(0, Math.Min(max, value)); Invalidate(); } }
+  public System.Drawing.Color BarColor = System.Drawing.Color.FromArgb(96, 205, 255);
+  public System.Drawing.Color TrackColor = System.Drawing.Color.FromArgb(58, 58, 58);
+  protected override void OnPaint(System.Windows.Forms.PaintEventArgs e) {
+    var g = e.Graphics; g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+    g.Clear(Parent != null ? Parent.BackColor : BackColor);
+    int h = Math.Min(4, Height); int y = (Height - h) / 2;
+    using (var b = new System.Drawing.SolidBrush(TrackColor)) g.FillRectangle(b, 0, y, Width, h);
+    int w = (int)((long)Width * v / max);
+    if (w > 0) using (var b = new System.Drawing.SolidBrush(BarColor)) g.FillRectangle(b, 0, y, w, h);
+  }
 }
+"@ -ReferencedAssemblies System.Windows.Forms, System.Drawing
+}
+[CSNative]::DarkApp()
 
 function C($hex) { [Drawing.ColorTranslator]::FromHtml($hex) }
 $Theme = @{
@@ -121,9 +146,9 @@ function Style-ListView($lv) {
   })
   $lv.Add_ItemChecked({ param($s, $e) $s.Invalidate($e.Item.Bounds) })
   On-Handle $lv { param($c)
-    [void][CSNative]::SetWindowTheme($c.Handle, "DarkMode_Explorer", $null)
+    [CSNative]::DarkWindow($c.Handle, "DarkMode_Explorer")
     $hdr = [CSNative]::SendMessage($c.Handle, 0x101F, [IntPtr]::Zero, [IntPtr]::Zero)   # LVM_GETHEADER
-    if ($hdr -ne [IntPtr]::Zero) { [void][CSNative]::SetWindowTheme($hdr, "DarkMode_ItemsView", $null) }
+    if ($hdr -ne [IntPtr]::Zero) { [CSNative]::DarkWindow($hdr, "DarkMode_ItemsView") }
   }
 }
 function Style-Progress($pb) {
@@ -141,14 +166,15 @@ function Apply-Theme($root) {
       { $_ -is [Windows.Forms.CheckBox] }    { Style-Check $c; break }
       { $_ -is [Windows.Forms.ListView] }    { Style-ListView $c; break }
       { $_ -is [Windows.Forms.ProgressBar] } { Style-Progress $c; break }
-      { $_ -is [Windows.Forms.TextBox] }     { $c.BackColor = $Theme.Input; $c.ForeColor = $Theme.Text; $c.BorderStyle = 'FixedSingle'; On-Handle $c { param($x) [void][CSNative]::SetWindowTheme($x.Handle, "DarkMode_Explorer", $null) }; break }
-      { $_ -is [Windows.Forms.ComboBox] }    { $c.FlatStyle = 'Flat'; $c.BackColor = $Theme.Button; $c.ForeColor = $Theme.Text; On-Handle $c { param($x) [void][CSNative]::SetWindowTheme($x.Handle, "DarkMode_CFD", $null) }; break }
+      { $_ -is [CSProgress] } { $c.BarColor = $Theme.Accent; $c.TrackColor = (C '#3A3A3A'); break }
+      { $_ -is [Windows.Forms.TextBox] }     { $c.BackColor = $Theme.Input; $c.ForeColor = $Theme.Text; $c.BorderStyle = 'FixedSingle'; On-Handle $c { param($x) [CSNative]::DarkWindow($x.Handle, "DarkMode_Explorer") }; break }
+      { $_ -is [Windows.Forms.ComboBox] }    { $c.FlatStyle = 'Flat'; $c.BackColor = $Theme.Button; $c.ForeColor = $Theme.Text; On-Handle $c { param($x) [CSNative]::DarkWindow($x.Handle, "DarkMode_CFD") }; break }
       { $_ -is [Windows.Forms.TabPage] }     { $c.BackColor = $Theme.Bg; $c.ForeColor = $Theme.Text; $c.Padding = '24,18,24,16'; break }
       { $_ -is [Windows.Forms.Label] } {
         if (-not $c.ForeColor.IsEmpty -and $ThemeMap[$c.ForeColor.Name]) { $c.ForeColor = $ThemeMap[$c.ForeColor.Name] }
         if ($c.Font.Bold -and $c.Font.Size -ge 11 -and $c.Font.FontFamily.Name -notin $DisplayFontName) { $c.Font = DisplayFont 14 'Bold' }
         break }
-      { $_ -is [Windows.Forms.ScrollableControl] -and $_.AutoScroll } { On-Handle $c { param($x) [void][CSNative]::SetWindowTheme($x.Handle, "DarkMode_Explorer", $null) } }
+      { $_ -is [Windows.Forms.ScrollableControl] -and $_.AutoScroll } { On-Handle $c { param($x) [CSNative]::DarkWindow($x.Handle, "DarkMode_Explorer") } }
     }
     if ($c.HasChildren -and -not ($c -is [Windows.Forms.ListView])) { Apply-Theme $c }
   }
@@ -197,7 +223,7 @@ function Initialize-Shell {
   $side = New-Object Windows.Forms.Panel -Property @{Dock='Left'; Width=220; BackColor=$Theme.Side; Padding='0,8,0,8'}
   $brand = New-Object Windows.Forms.Panel -Property @{Dock='Top'; Height=64; BackColor=$Theme.Side}
   $logo = New-Object Windows.Forms.PictureBox -Property @{Size='28,28'; Location='20,18'; SizeMode='StretchImage'}
-  try { $logo.Image = $form.Icon.ToBitmap() } catch {}
+  try { $ico = Join-Path (Split-Path $PSScriptRoot) "CleanSweep.ico"; $logo.Image = (New-Object Drawing.Icon $ico, 32, 32).ToBitmap() } catch { try { $logo.Image = $form.Icon.ToBitmap() } catch {} }
   $bt = New-Object Windows.Forms.Label -Property @{Text="CleanSweep"; Location='56,13'; AutoSize=$true; Font=(DisplayFont 13 'Bold'); ForeColor=$Theme.Text}
   $bv = New-Object Windows.Forms.Label -Property @{Text="Version $Version"; Location='57,37'; AutoSize=$true; Font=(UiFont 8.5); ForeColor=$Theme.Sub}
   $brand.Controls.AddRange(@($logo, $bt, $bv))

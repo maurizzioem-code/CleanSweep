@@ -35,9 +35,9 @@ $rep = @{}
 $rep.Page = New-Object Windows.Forms.TabPage -Property @{Text="Repair"; Padding='10,10,10,10'}
 $rep.Status = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=36; TextAlign='MiddleLeft'; Text="Select a repair tool, then click Run. Not sure? Click Recommended repair."; Font=New-Object Drawing.Font("Segoe UI",12,[Drawing.FontStyle]::Bold)}
 $rep.List = New-Object Windows.Forms.ListView -Property @{View='Details'; FullRowSelect=$true; Dock='Top'; Height=190; HideSelection=$false; MultiSelect=$false}
-foreach ($c in @(@("Tool",260), @("Time",80), @("Last result",420))) { [void]$rep.List.Columns.Add($c[0], $c[1]) }
+foreach ($c in @(@("Tool",260), @("Time",100), @("Last result",420))) { [void]$rep.List.Columns.Add($c[0], $c[1]) }
 $rep.Info = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=44; Padding='2,4,2,0'; ForeColor='DimGray'; Text="DISM repairs Windows' own store of system files; System File Checker then uses it to fix your installed files."}
-$rep.Prog = New-Object Windows.Forms.ProgressBar -Property @{Dock='Top'; Height=18; Minimum=0; Maximum=100}
+$rep.Prog = New-Object CSProgress -Property @{Dock='Top'; Height=18; Minimum=0; Maximum=100}
 $rep.Out  = New-Object Windows.Forms.TextBox -Property @{Dock='Fill'; Multiline=$true; ReadOnly=$true; ScrollBars='Vertical'; WordWrap=$true; Font=New-Object Drawing.Font("Consolas",9)}
 $rep.Opt  = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Bottom'; AutoSize=$true; AutoSizeMode='GrowAndShrink'; Padding='0,4,0,0'}
 $rep.Rp   = New-Object Windows.Forms.CheckBox -Property @{Text="Create a System Restore point before repairs (recommended)"; AutoSize=$true; Checked=$true}

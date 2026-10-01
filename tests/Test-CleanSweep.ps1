@@ -17,7 +17,7 @@ function Step($name, [scriptblock]$body) {
   try { & $body } catch { $ex = $_ }
   $sw.Stop()
   $errs = @(); if ($Error.Count -gt $before) { $errs = @($Error[0..($Error.Count - $before - 1)] | ForEach-Object { "$_ (line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim()))" }) }
-  $errs = @($errs | Where-Object { $_ -notmatch 'is denied|being used by another process|because it does not exist|^CANCELLED|No matching MSFT_|No MSFT_|not supported on this operating system' })   # expected: files in use are skipped
+  $errs = @($errs | Where-Object { $_ -notmatch 'is denied|being used by another process|because it does not exist|^CANCELLED|No matching MSFT_|^Not supported|^Invalid namespace|^Invalid class|No MSFT_|not supported on this operating system' })   # expected: files in use are skipped
   if ($ex) { $errs = @("THROWN: $ex (line $($ex.InvocationInfo.ScriptLineNumber))") + $errs }
   $status = if ($errs) { "ISSUES" } else { "PASS" }
   $results.Add([pscustomobject]@{ Step=$name; Status=$status; Seconds=[math]::Round($sw.Elapsed.TotalSeconds,1); Errors=($errs | Select-Object -Unique) })
@@ -58,6 +58,7 @@ $before = $Error.Count; $sw = [Diagnostics.Stopwatch]::StartNew()
 $startOut = Get-Content "$Out\startup.txt" -Raw
 $sw.Stop()
 $loadErrs = @(); if ($Error.Count -gt $before) { $loadErrs = @($Error[0..($Error.Count - $before - 1)] | ForEach-Object { "$_ (line $($_.InvocationInfo.ScriptLineNumber))" }) }
+$loadErrs = @($loadErrs | Where-Object { $_ -notmatch '^Not supported|^Invalid namespace|^Invalid class|No MSFT_|No matching MSFT_' })   # optional sensors absent on this PC
 if ($startOut -match 'STARTUP ERROR') { $loadErrs += $startOut.Trim() }
 if (-not $form) { $loadErrs += "Main window was not created" }
 $results.Add([pscustomobject]@{ Step="App loads without errors"; Status=$(if ($loadErrs) { "ISSUES" } else { "PASS" }); Seconds=[math]::Round($sw.Elapsed.TotalSeconds,1); Errors=$loadErrs })
@@ -203,11 +204,15 @@ Step "Drives: tick system drive" {
 }
 Shot "drives"
 Step "Drives: check for errors (chkdsk /scan)" {
+  # The runner's C: holds millions of files; check the small data drive instead when there is one
+  $other = @($drv.List.Items) | Where-Object { $_.Tag.Letter -and $_.Tag.Letter -ne $SysDrive } | Select-Object -First 1
+  if ($other) { foreach ($i in $drv.List.Items) { $i.Checked = ($i -eq $other) } }
   $script:RepairAutoCancelSec = 600; $drv.Check.PerformClick(); $script:RepairAutoCancelSec = 0
   Note "    $($drv.Status.Text)"; Note ("    output: " + (($drv.Out.Text -split "`r`n" | Where-Object { $_ } | Select-Object -Last 4) -join ' / '))
   if ($drv.Status.Text -match 'failed|Cancelled') { Write-Error $drv.Status.Text }
 }
 Step "Drives: optimize" {
+  foreach ($i in $drv.List.Items) { $i.Checked = ($i.Tag.Letter -eq $SysDrive) }
   $script:RepairAutoCancelSec = 600; $drv.Opt.PerformClick(); $script:RepairAutoCancelSec = 0
   Note "    $($drv.Status.Text)"; Note ("    output: " + (($drv.Out.Text -split "`r`n" | Where-Object { $_ } | Select-Object -Last 4) -join ' / '))
   if ($drv.Status.Text -match 'failed|Cancelled') { Write-Error $drv.Status.Text }
@@ -216,9 +221,9 @@ Step "Drives: find large files" {
   $big = "$env:TEMP\CleanSweepBigTest.bin"; $fs = [IO.File]::Create($big); $fs.SetLength(150MB); $fs.Close()
   $drv.Large.PerformClick(); Note "    $($drv.Status.Text)"
   foreach ($x in ($script:LargeFiles | Sort-Object Size -Descending | Select-Object -First 5)) { Note "      $(Fmt $x.Size)  $($x.Path)" }
-  if (-not ($script:LargeFiles | Where-Object Path -eq $big)) { Write-Error "Test file not found" }
+  if (-not ($script:LargeFiles | Where-Object Name -eq 'CleanSweepBigTest.bin')) { Write-Error "Test file not found" }
   $lv = $script:LargeForm.Controls | Where-Object { $_ -is [Windows.Forms.ListView] }
-  $it = @($lv.Items) | Where-Object { $_.Tag.Path -eq $big }; $it.Checked = $true
+  $it = @($lv.Items) | Where-Object { $_.Tag.Name -eq 'CleanSweepBigTest.bin' } | Select-Object -First 1; $it.Checked = $true
   ($script:LargeForm.Controls | Where-Object { $_ -is [Windows.Forms.FlowLayoutPanel] }).Controls[1].PerformClick()
   Note "    after Recycle Bin: test file exists = $(Test-Path $big)"; if (Test-Path $big) { Write-Error "File not moved"; Remove-Item $big -Force }
 }

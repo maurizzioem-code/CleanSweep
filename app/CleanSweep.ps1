@@ -709,7 +709,8 @@ function Invoke-EthDiagnostics {
   else { Add-Row "Link speed" $spTxt "OK" }
   $isPhysical = [bool](Get-NetAdapter -Physical -ErrorAction Ignore | Where-Object ifIndex -eq $a.ifIndex)
   if (-not $isPhysical) { Add-Row "Duplex" "Not reported (virtual or bridged adapter)" "Info" }
-  elseif ($a.FullDuplex) { Add-Row "Duplex" "Full duplex" "OK" } else { Add-Row "Duplex" "Half duplex" "Problem" "Half duplex causes collisions and slowdowns. Usually a cable fault or a forced speed setting - see the Speed & Duplex check." }
+  elseif ($a.FullDuplex) { Add-Row "Duplex" "Full duplex" "OK" }
+  elseif ($mbps -gt 1000) { Add-Row "Duplex" "Not reported by this adapter" "Info" }   # multi-gigabit links are always full duplex else { Add-Row "Duplex" "Half duplex" "Problem" "Half duplex causes collisions and slowdowns. Usually a cable fault or a forced speed setting - see the Speed & Duplex check." }
   if ($sd) {
     if ($sd.DisplayValue -match 'Auto') { Add-Row "Speed & Duplex setting" $sd.DisplayValue "OK" }
     else { Add-Row "Speed & Duplex setting" "Forced to '$($sd.DisplayValue)'" "Warning" "A forced speed can mismatch the router. Set it back to Auto Negotiation in Device Manager > Network adapters > your adapter > Advanced." }

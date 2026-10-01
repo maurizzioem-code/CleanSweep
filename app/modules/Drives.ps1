@@ -220,7 +220,7 @@ $drv.Large.Add_Click({
   if (-not (Test-DrivesTicked)) { return }
   $letters = @(Get-CheckedDrives | ForEach-Object Letter); $script:RepairCancel = $false; $drv.Out.Clear()
   Set-DriveBusy $true
-  try { $files = Find-LargeFiles $letters } finally { Set-DriveBusy $false }
+  try { $files = @(Find-LargeFiles $letters) } finally { Set-DriveBusy $false }   # @() keeps a single result as a list
   $script:LargeFiles = $files
   if ($script:RepairCancel) { $drv.Status.Text = "Cancelled."; return }
   $drv.Out.AppendText(("Largest files:`r`n" + (($files | Sort-Object Size -Descending | Select-Object -First 10 | ForEach-Object { "{0,10}  {1}" -f (Fmt $_.Size), $_.Path }) -join "`r`n")) + "`r`n")

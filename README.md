@@ -1,6 +1,15 @@
 # CleanSweep
 
-A health dashboard plus a simple junk file, registry and broken shortcut cleaner with a Wi-Fi and Ethernet network optimizer for Windows 11.
+A Windows 11 style PC health app: a dark dashboard with a health score, live hardware monitoring and one-click actions, plus junk cleaning, drive tools, repair tools and a network optimizer.
+
+## Features
+- **Dashboard**: health score out of 100 with recommendations, score history, live CPU / memory / GPU / disk / network graphs, battery and temperatures, and one-click actions (Quick clean, Free up space, Repair Windows, Optimize drives, Network check, Restore point).
+- **Junk Files**: temp files, caches, Windows Update leftovers and Recycle Bin on any drive.
+- **Drives**: every volume with a checkbox (hidden Windows partitions are shown but protected); clean junk, find large files, check for errors (`chkdsk /scan`), optimize (TRIM / defrag).
+- **Repair**: DISM, System File Checker and Windows Update repair (with undo), live output and logs.
+- **Registry** and **Broken Shortcuts**: conservative cleaning with backups.
+- **Network Optimizer**: Wi-Fi and Ethernet tests, standard repairs and Ethernet diagnostics.
+- **Updates**: automatic, SHA-256 verified.
 
 ## Install
 1. Download [CleanSweep.exe](https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-3.2.exe) and run it. It installs itself and adds Desktop and Start menu shortcuts.

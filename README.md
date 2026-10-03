@@ -9,9 +9,9 @@ A Windows 11 style PC health app: a dark dashboard with a health score, live har
 - **Drives**: every volume with a checkbox (hidden Windows partitions are shown but protected); clean junk, find large files, check for errors (`chkdsk /scan`), optimize (TRIM / defrag).
 - **Repair**: DISM, System File Checker and Windows Update repair (with undo), live output and logs.
 - **Broken Shortcuts**: removes shortcuts whose target is gone (to the Recycle Bin).
-- **Registry cleaner** (advanced, hidden by default): conservative, with backups. Turn it on under Updates & settings.
+- **Registry cleaner** (advanced, hidden by default): conservative, with backups. Turn it on under Settings.
 - **Network Optimizer**: Wi-Fi and Ethernet tests, standard repairs and Ethernet diagnostics.
-- **Updates**: automatic, SHA-256 verified.
+- **Settings**: automatic updates (SHA-256 verified) and advanced tools.
 
 ## Install
 1. Download [CleanSweep.exe](https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-4.2.exe) and run it. It installs itself and adds Desktop and Start menu shortcuts.

@@ -779,7 +779,7 @@ function Check-Update([bool]$manual) {
 }
 
 $upd = @{}
-$upd.Page   = New-Object Windows.Forms.TabPage -Property @{Text="Updates & settings"}
+$upd.Page   = New-Object Windows.Forms.TabPage -Property @{Text="Settings"}
 $upd.Title  = New-Object Windows.Forms.Label -Property @{AutoSize=$true; Margin='0,0,0,10'; Text="CleanSweep $Version"; Font=New-Object Drawing.Font("Segoe UI",16,[Drawing.FontStyle]::Bold)}
 $upd.Status = New-Object Windows.Forms.Label -Property @{AutoSize=$true; Margin='0,0,0,4'; Text="Updates have not been checked yet."}
 $upd.Last   = New-Object Windows.Forms.Label -Property @{AutoSize=$true; Margin='0,0,0,12'; ForeColor='DimGray'}
@@ -813,7 +813,7 @@ $form.Add_Shown({
 . (Join-Path $PSScriptRoot "modules\Cleanup.ps1")
 . (Join-Path $PSScriptRoot "modules\Schedule.ps1")
 
-# Page order. The registry cleaner is an advanced tool: hidden unless turned on in Updates & settings,
+# Page order. The registry cleaner is an advanced tool: hidden unless turned on in Settings,
 # because registry cleaning has no real speed benefit and is the riskiest kind of cleaning.
 $order = @($dash.Page, $tcl.Page, $drv.Page, $rep.Page, $sc.Page, $wifi.Page)
 if ($settings.ShowAdvanced -or $TestMode) { $order += $reg.Page }

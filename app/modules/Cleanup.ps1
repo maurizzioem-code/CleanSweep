@@ -119,10 +119,11 @@ function Get-TempLocations {
     @{ Name = $k; Kind = 'paths'; Paths = @($targets[$k]); On = ($CleanDefaults -contains $k); Note = $CleanNotes[$k] }
   }
   # Leftover .tmp/.chk files on other drives (off by default - these drives are walked completely)
+  $rows = @($rows)
   foreach ($d in @(Get-CimInstance Win32_LogicalDisk -Filter "DriveType=2 OR DriveType=3" -ErrorAction Ignore | Where-Object { $_.Size -gt 0 -and $_.DeviceID -ne $SysDrive } | Sort-Object DeviceID)) {
-    @{ Name = "Leftover temp files on $($d.DeviceID)"; Kind = 'drive'; Drive = $d.DeviceID; Paths = @("$($d.DeviceID)\"); On = $false; Note = ".tmp, .chk and similar files" }
+    $rows += @{ Name = "Leftover temp files on $($d.DeviceID)"; Kind = 'drive'; Drive = $d.DeviceID; Paths = @("$($d.DeviceID)\"); On = $false; Note = ".tmp, .chk and similar files" }
   }
-  @{ Name = "Recycle Bin (old items)"; Kind = 'recycle'; Paths = @(); On = $false; Note = "only items deleted more than the chosen days ago" }
+  $rows += @{ Name = "Recycle Bin (old items)"; Kind = 'recycle'; Paths = @(); On = $false; Note = "only items deleted more than the chosen days ago" }
   $rows
 }
 function Load-TempList {

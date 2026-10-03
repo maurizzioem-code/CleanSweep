@@ -14,7 +14,7 @@ A Windows 11 style PC health app: a dark dashboard with a health score, live har
 - **Updates**: automatic, SHA-256 verified.
 
 ## Install
-1. Download [CleanSweep.exe](https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-4.1.exe) and run it. It installs itself and adds Desktop and Start menu shortcuts.
+1. Download [CleanSweep.exe](https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-4.2.exe) and run it. It installs itself and adds Desktop and Start menu shortcuts.
 2. Or download [CleanSweep.zip](https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/CleanSweep.zip), extract it and run `Install CleanSweep.bat`.
 
 ## Updates

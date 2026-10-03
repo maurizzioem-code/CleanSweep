@@ -1,6 +1,6 @@
 {
-  "version": "4.1",
-  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-4.1.zip",
-  "sha256": "8CA0BF7E3FDDD6C300C349F94BC6FC343F5F30526FAFF23A3635E4025E543BBE",
-  "notes": "CleanSweep 4.1: automatic cleanup scheduling on the Dashboard (daily, weekly or every 4 weeks, runs even when CleanSweep is closed). Dark pop-up windows. Fixed sidebar icons while a window is open."
+  "version": "4.2",
+  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-4.2.zip",
+  "sha256": "E21C0FA1AF00DA20874E933A7A930F6943357D88784E7D6EE65218FA2B01E314",
+  "notes": "CleanSweep 4.2: new Temp Files cleaner. Files that can't be deleted are listed with the reason and the app using them; choose Retry, Delete at next restart, Ignore this time or Always ignore."
 }

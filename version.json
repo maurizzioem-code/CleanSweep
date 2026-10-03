@@ -1,6 +1,6 @@
 {
-  "version": "4.2",
-  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-4.2.zip",
-  "sha256": "E21C0FA1AF00DA20874E933A7A930F6943357D88784E7D6EE65218FA2B01E314",
-  "notes": "CleanSweep 4.2: new Temp Files cleaner. Files that can't be deleted are listed with the reason and the app using them; choose Retry, Delete at next restart, Ignore this time or Always ignore."
+  "version": "4.3",
+  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-4.3.zip",
+  "sha256": "77D381A55988AD2E0ED341779DBB2664B0701A8F7BDE490BBC60284F932BBF57",
+  "notes": "Cleanup page: Junk Files and Temp Files merged into one page with one cleaning engine (same age, ignore and in-use rules everywhere, links never followed). Registry cleaner is now an advanced option, off by default (Settings). Prefetch cleaning removed. Recycle Bin is off by default and only empties items deleted more than 30 days ago (adjustable)."
 }

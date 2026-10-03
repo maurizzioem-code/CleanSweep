@@ -31,10 +31,19 @@ namespace CleanSweep
             logFile = Path.Combine(outDir, "log.txt"); File.WriteAllText(logFile, "");
             form = f; form.StartPosition = FormStartPosition.Manual; form.Location = new Point(0, 0);
             form.Size = new Size(1024, 720); form.TopMost = true;
+            // The test changes settings (ignore list, temp age/mode). Settings are shared with the PowerShell
+            // edition, so keep a copy and put the user's own settings back afterwards.
+            string saved = null; try { if (File.Exists(Settings.FilePath)) saved = File.ReadAllText(Settings.FilePath); } catch { }
             form.Shown += async (s, e) =>
             {
                 try { await RunAll(); }
                 catch (Exception ex) { Note("TEST HARNESS ERROR: " + ex); failed++; }
+                try
+                {
+                    if (saved != null) File.WriteAllText(Settings.FilePath, saved, new System.Text.UTF8Encoding(false)); else if (File.Exists(Settings.FilePath)) File.Delete(Settings.FilePath);
+                    Settings.Load(); Note("Your settings were put back as they were before the test.");
+                }
+                catch (Exception ex) { Note("Could not put settings back: " + ex.Message); failed++; }
                 Note(""); Note($"{steps} steps, {failed} with issues");
                 form.Close();
             };

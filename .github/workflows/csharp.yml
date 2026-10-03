@@ -26,9 +26,22 @@ jobs:
           "exit code (failed steps): $($p.ExitCode)"
           if (Test-Path "$env:LOCALAPPDATA\CleanSweep\logs\app.log") { Copy-Item "$env:LOCALAPPDATA\CleanSweep\logs\app.log" $o }
           if ($p.ExitCode -ne 0) { exit 1 }
+      - name: Laptop test kit (run it the way the user will)
+        timeout-minutes: 10
+        shell: powershell
+        run: |
+          $kit = Join-Path $PWD "laptop-kit"; New-Item -ItemType Directory $kit -Force | Out-Null
+          Copy-Item csharp\laptop-test\* $kit; Copy-Item csharp\bin\Release\CleanSweep.exe (Join-Path $kit "CleanSweep-CSharp-preview.exe")
+          powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kit "run-test.ps1")
+          $zip = Join-Path ([Environment]::GetFolderPath('Desktop')) 'CleanSweep test results.zip'
+          if (-not (Test-Path $zip)) { "results zip missing"; exit 1 }
+          Copy-Item $zip $PWD; Get-Content (Join-Path ([Environment]::GetFolderPath('Desktop')) 'CleanSweep test results\pc.txt')
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: csharp-test-output, path: test-output }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: laptop-kit-results, path: "CleanSweep test results.zip" }
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: CleanSweep-csharp-exe, path: csharp/bin/Release/CleanSweep.exe }

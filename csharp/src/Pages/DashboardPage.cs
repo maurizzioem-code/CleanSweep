@@ -353,7 +353,7 @@ namespace CleanSweep.Pages
             Run.Focus(); ScrollToTop();
             if (IsHandleCreated) BeginInvoke(new Action(ScrollToTop));
         }
-        public void ScrollTo(Control c) => scroll.ScrollControlIntoView(c);
+        public void ScrollTo(Control c) { var p = scroll.PointToClient(c.PointToScreen(Point.Empty)); scroll.AutoScrollPosition = new Point(0, p.Y - scroll.AutoScrollPosition.Y - 40); }
         public void ScrollToTop() => scroll.AutoScrollPosition = new Point(0, 0);
         public Control RecommendationsCard => List.Parent;
         public bool Stacked => stacked == true;

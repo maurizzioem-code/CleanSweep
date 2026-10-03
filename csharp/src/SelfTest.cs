@@ -152,6 +152,7 @@ namespace CleanSweep
             await Step("Dashboard: run health check", async () =>
             {
                 var sw = Stopwatch.StartNew(); await dash.RunCheckAsync(); sw.Stop();
+                Note($"    Finding column {dash.List.Columns[2].Width}px, list {dash.List.ClientSize.Width}px");
                 Note($"    {dash.Grade.Text} ({dash.Gauge.Score}) in {sw.Elapsed.TotalSeconds:0.0}s - {dash.Status.Text}");
                 foreach (var f in dash.Findings.OrderBy(f => f.Status)) Note($"      [{f.Status}] {f.Area}: {f.Text}" + (f.ActionText.Length > 0 ? $"  -> {dash.Resolve(f).Text}" : ""));
                 Check(dash.Gauge.Score == Health.Score(dash.Findings), "gauge doesn't match the findings");
@@ -198,7 +199,7 @@ namespace CleanSweep
                 var clean = new Finding("Junk files", Engine.Status.Warning, "x", "", "page:Cleanup", "Open Cleanup");
                 dash.RunAction(clean); Pump(50); Check(form.Current is CleanupPage, "page action did not open Cleanup"); form.ShowPage(dash);
             });
-            dash.ScrollTo(dash.RecommendationsCard); Pump(200); Shot("dashboard-recommendations"); dash.ScrollToTop();
+            Pump(300); dash.ScrollTo(dash.RecommendationsCard); Pump(200); Note("    scrolled to recommendations: " + dash.RecommendationsCard.Top); Shot("dashboard-recommendations"); dash.ScrollToTop();
             await Step("Dashboard: one-click tiles", async () =>
             {
                 foreach (var t in dash.Tiles.Values) Note($"    {t.Title}: {(t.Available ? "ready" : "later phase")} - {t.Sub}");

@@ -35,7 +35,10 @@ namespace CleanSweep
                 Msg.Test = testOut != null;
                 Settings.Load();
                 Form = new MainForm();
-                Form.Build(new Page[] { new CleanupPage(), new AboutPage() });
+                var dash = new DashboardPage();
+                Form.Build(new Page[] { dash, new CleanupPage(), new AboutPage() });
+                // First health check runs automatically when the window opens (read-only)
+                if (testOut == null) Form.Shown += async (s, e) => await dash.RunCheckAsync();
 
                 if (testOut != null) return SelfTest.Run(Form, testOut);
                 Application.Run(Form);

@@ -117,6 +117,101 @@ namespace CleanSweep
             }
             form.Size = new Size(1024, 720); form.ShowPage(cl); Pump(200);
 
+            // ---------------------------------------------------------------- dashboard
+            var dash = form.Page<DashboardPage>();
+            form.ShowPage(dash); Pump(200);
+            foreach (var size in new[] { new Size(1024, 720), new Size(960, 640) })
+                await Step($"Dashboard: responsive layout at {size.Width}x{size.Height}", () =>
+                {
+                    form.Size = size; Pump(300);
+                    Note($"    score and actions stacked: {dash.Stacked}   tile columns: {dash.TileColumns}");
+                    var bad = new List<string>();
+                    foreach (var t in dash.Tiles.Values) if (t.Width < 150 || t.Height < 50) bad.Add($"tile '{t.Title}' too small ({t.Size})");
+                    foreach (var c in dash.Hw.Values) if (c.Width < 200 || c.Height < 150) bad.Add($"card '{c.Title}' too small ({c.Size})");
+                    if (dash.List.Width < 500) bad.Add($"recommendations list too narrow ({dash.List.Width})");
+                    if (bad.Count > 0) Fail(string.Join("; ", bad));
+                });
+            form.Size = new Size(1024, 720); Pump(200);
+            await Step("Dashboard: live hardware monitor", () =>
+            {
+                var sw = Stopwatch.StartNew(); while (dash.Samples < 3 && sw.ElapsedMilliseconds < 15000) Pump(200);
+                Note($"    {dash.Samples} samples in {sw.ElapsedMilliseconds} ms");
+                foreach (var c in dash.Hw.Values) Note($"      {c.Title}: {c.Value} | {c.Sub.Replace("\n", " / ")}");
+                Note("    header: " + dash.Machine.Text);
+                Check(dash.Samples >= 2, "no live samples");
+                Check(dash.Hw["cpu"].Value.EndsWith("%") && dash.Hw["ram"].Value.EndsWith("%"), "CPU or memory not shown");
+            });
+            await Step("Dashboard: score formula", () =>
+            {
+                var rows = new List<Finding> { new Finding("a", Engine.Status.Problem, ""), new Finding("b", Engine.Status.Warning, ""), new Finding("c", Engine.Status.Warning, ""), new Finding("d", Engine.Status.OK, "") };
+                Check(Health.Score(rows) == 75, "100 - 15 - 2x5 should be 75, got " + Health.Score(rows));
+                Check(Health.Score(Enumerable.Range(0, 9).Select(i => new Finding("x", Engine.Status.Problem, ""))) == 0, "score should not go below 0");
+                Check(Health.Grade(95) == "Excellent" && Health.Grade(80) == "Good" && Health.Grade(60) == "Fair" && Health.Grade(10) == "Needs attention", "grades wrong");
+            });
+            int histBefore = Health.LoadHistory().Count;
+            await Step("Dashboard: run health check", async () =>
+            {
+                var sw = Stopwatch.StartNew(); await dash.RunCheckAsync(); sw.Stop();
+                Note($"    {dash.Grade.Text} ({dash.Gauge.Score}) in {sw.Elapsed.TotalSeconds:0.0}s - {dash.Status.Text}");
+                foreach (var f in dash.Findings.OrderBy(f => f.Status)) Note($"      [{f.Status}] {f.Area}: {f.Text}" + (f.ActionText.Length > 0 ? $"  -> {dash.Resolve(f).Text}" : ""));
+                Check(dash.Gauge.Score == Health.Score(dash.Findings), "gauge doesn't match the findings");
+                var areas = dash.Findings.Select(f => f.Area).Distinct().ToList();
+                Check(areas.Count >= 10, $"only {areas.Count} areas checked");
+                var broken = dash.Findings.Where(f => f.Text.StartsWith("Could not check") && new[] { "Storage", "Memory", "Uptime", "Startup apps", "Junk files", "Devices" }.Contains(f.Area)).ToList();
+                Check(broken.Count == 0, "core checks failed: " + string.Join("; ", broken.Select(b => b.Area + " " + b.Text)));
+                Check(dash.SaveReport.Enabled && dash.Run.Enabled, "buttons not re-enabled");
+            });
+            Shot("dashboard");
+            await Step("Dashboard: history saved and shown", () =>
+            {
+                var h = Health.LoadHistory(); Note($"    {h.Count} entries (was {histBefore})  trend: {dash.Trend.Text}");
+                Check(h.Count == histBefore + 1, "history entry not added");
+                Check(h.Last().Score == dash.Gauge.Score, "saved score is different");
+                // the PowerShell edition writes the same file with Export-Csv (BOM, quoted values)
+                string ps = Path.Combine(outDir, "ps-history.csv");
+                File.WriteAllText(ps, "\"Date\",\"Score\",\"Problems\",\"Warnings\",\"SystemFreeGB\"\r\n\"2026-09-01T10:00:00\",\"85\",\"0\",\"3\",\"40.5\"\r\n", new System.Text.UTF8Encoding(true));
+                var p = Health.LoadHistory(ps); Check(p.Count == 1 && p[0].Score == 85 && p[0].Warnings == 3 && Math.Abs(p[0].SystemFreeGB - 40.5) < 0.01, "PowerShell history format not read");
+            });
+            await Step("Dashboard: save report", () =>
+            {
+                string f = Path.Combine(outDir, "health-report.txt"); dash.WriteReport(f);
+                var txt = File.ReadAllText(f); Note("    " + txt.Split('\n').Take(3).Aggregate((a, b) => a.Trim() + " | " + b.Trim()));
+                Check(txt.Contains("Health score: " + dash.Gauge.Score), "score missing from report");
+            });
+            await Step("Dashboard: recommendation actions", () =>
+            {
+                foreach (ListViewItem it in dash.List.Items)
+                {
+                    var f = (Finding)it.Tag; var (action, text) = dash.Resolve(f); if (action.Length == 0) continue;
+                    it.Selected = true; Pump(50);
+                    Check(dash.DoAction.Enabled && dash.DoAction.Text == text, $"button not set for {f.Area}");
+                    int before = Shell.TestOpened.Count; var page = form.Current;
+                    dash.DoAction.PerformClick(); Pump(50);
+                    string what = Shell.TestOpened.Count > before ? "opens " + Shell.TestOpened.Last() : form.Current != page ? "shows page " + form.Current.Title : "(nothing)";
+                    Note($"    {f.Area}: '{text}' {what}");
+                    if (what == "(nothing)" && action != "battery") Fail($"{f.Area}: action did nothing");
+                    form.ShowPage(dash); Pump(50);
+                }
+                // pages that aren't in this edition yet fall back to Windows' own settings
+                var drives = new Finding("Storage", Engine.Status.Problem, "x", "", "page:Drives", "Free up space").Fallback("settings:ms-settings:storagesense", "Open Storage settings");
+                Check(dash.Resolve(drives).Action == "settings:ms-settings:storagesense", "fallback not used for a missing page");
+                var clean = new Finding("Junk files", Engine.Status.Warning, "x", "", "page:Cleanup", "Open Cleanup");
+                dash.RunAction(clean); Pump(50); Check(form.Current is CleanupPage, "page action did not open Cleanup"); form.ShowPage(dash);
+            });
+            dash.ScrollTo(dash.RecommendationsCard); Pump(200); Shot("dashboard-recommendations"); dash.ScrollToTop();
+            await Step("Dashboard: one-click tiles", async () =>
+            {
+                foreach (var t in dash.Tiles.Values) Note($"    {t.Title}: {(t.Available ? "ready" : "later phase")} - {t.Sub}");
+                Check(dash.Tiles["clean"].Available && dash.Tiles["restore"].Available, "Quick clean / Restore point should work");
+                Check(!dash.Tiles["repair"].Available, "Repair tile should wait for its page");
+                int m = Msg.Log.Count; await dash.QuickAction("repair"); Check(Msg.Log.Count == m + 1, "unavailable tile gave no message");
+                await dash.QuickAction("clean"); Note("    Quick clean: " + form.Page<CleanupPage>().Status.Text);
+                Check(form.Current is CleanupPage, "Quick clean should show the Cleanup page");
+                form.ShowPage(dash);
+                await dash.QuickAction("restore"); Note("    Restore point: " + dash.Tiles["restore"].Sub);
+            });
+            Shot("dashboard-after-actions");
+
             // ---------------------------------------------------------------- settings
             await Step("Settings: shared file keeps other keys", () =>
             {
@@ -287,8 +382,9 @@ namespace CleanSweep
             cl.SetIgnore(new string[0]); cl.TickDefaults();
             try { RemoveJunction(Path.Combine(d, "link")); Directory.Delete(d, true); Directory.Delete(outside2, true); } catch { }
 
-            await Step("Messages asked during the test", () => { foreach (var m in Msg.Log) Note("  " + m); });
+            await Step("Messages asked during the test", () => { foreach (var m in Msg.Log) Note("  " + m); foreach (var o in Shell.TestOpened) Note("  [would open] " + o); });
             form.ShowPage(cl); Shot("cleanup-final");
+            form.ShowPage(dash); Pump(300); Shot("dashboard-final");
         }
 
         // ---------------------------------------------------------------- helpers

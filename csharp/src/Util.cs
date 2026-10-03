@@ -52,8 +52,10 @@ namespace CleanSweep
 
     public static class Shell
     {
+        public static readonly List<string> TestOpened = new List<string>();
         public static void Open(string target, string args = null)
         {
+            if (Msg.Test) { TestOpened.Add((target + " " + (args ?? "")).Trim()); return; }   // self-test: record, don't open
             try { Process.Start(new ProcessStartInfo(target, args ?? "") { UseShellExecute = true }); } catch { }
         }
         public static void ShowInExplorer(string path) => Open("explorer.exe", "/select,\"" + path + "\"");

@@ -25,6 +25,8 @@
     <Reference Include="System.Web.Extensions" />
     <Reference Include="Microsoft.VisualBasic" />
     <Reference Include="System.Management" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Core" />
     <EmbeddedResource Include="CleanSweep.ico" LogicalName="CleanSweep.ico" />
   </ItemGroup>
 </Project>

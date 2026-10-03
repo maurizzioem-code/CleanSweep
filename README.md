@@ -5,11 +5,11 @@ A Windows 11 style PC health app: a dark dashboard with a health score, live har
 ## Features
 - **Dashboard**: health score out of 100 with recommendations, score history, live CPU / memory / GPU / disk / network graphs, battery and temperatures, and one-click actions (Quick clean, Free up space, Repair Windows, Optimize drives, Network check, Restore point).
 - **Automatic cleanup**: schedule junk cleaning daily, weekly or every 4 weeks with Windows Task Scheduler. You choose what gets cleaned; files changed in the last 24 hours are skipped, and Recycle Bin items are only removed once they are older than the age you pick. Turning it off removes the task.
-- **Junk Files**: temp files, caches, Windows Update leftovers and Recycle Bin on any drive.
-- **Temp Files**: cleans your temp folder, the Windows temp folder, other users' temp folders and internet temp files (never follows links out of them). Files that can't be deleted are listed with the reason and the app using them, and you choose: Retry, Delete at next restart, Ignore this time, or Always ignore (this file, folder or file type). You can also set this to skip them or delete them at restart automatically.
+- **Cleanup**: one page for junk and temp files (your temp folder, Windows temp, other users' temp, internet temp files, Windows Update leftovers, crash reports, optional browser/thumbnail/shader caches, leftover temp files on other drives, and Recycle Bin items older than the age you pick). Files newer than the chosen age are skipped and links are never followed. Files that can't be deleted are listed with the reason and the app using them: Retry, Delete at next restart, Ignore this time, or Always ignore.
 - **Drives**: every volume with a checkbox (hidden Windows partitions are shown but protected); clean junk, find large files, check for errors (`chkdsk /scan`), optimize (TRIM / defrag).
 - **Repair**: DISM, System File Checker and Windows Update repair (with undo), live output and logs.
-- **Registry** and **Broken Shortcuts**: conservative cleaning with backups.
+- **Broken Shortcuts**: removes shortcuts whose target is gone (to the Recycle Bin).
+- **Registry cleaner** (advanced, hidden by default): conservative, with backups. Turn it on under Updates & settings.
 - **Network Optimizer**: Wi-Fi and Ethernet tests, standard repairs and Ethernet diagnostics.
 - **Updates**: automatic, SHA-256 verified.
 

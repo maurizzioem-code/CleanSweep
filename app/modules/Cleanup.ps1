@@ -1,5 +1,5 @@
-# ================================================================ TEMP FILES: temp file cleaner with a review list for files that can't be deleted
-# Safety: only known temp folders; never follows junctions/symlinks out of them; skips files newer than the chosen age.
+# ================================================================ CLEANUP: junk and temp file cleaner with a review list for files that can't be deleted
+# Uses the shared cleaning engine (JunkTargets.ps1): known junk locations only, links never followed, recent files skipped.
 # Files that can't be deleted are never forced: CleanSweep shows why (in use, protected) and which app holds them,
 # and the user chooses Retry, Delete at next restart, Ignore once, or Always ignore.
 
@@ -44,23 +44,26 @@ public static class CSLocks {
 }
 
 $tcl = @{}
-$tcl.Page   = New-Object Windows.Forms.TabPage -Property @{Text="Temp Files"; Padding='10,10,10,10'}
-$tcl.Status = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=36; TextAlign='MiddleLeft'; Text="Click Scan to find temporary files."; Font=New-Object Drawing.Font("Segoe UI",12,[Drawing.FontStyle]::Bold)}
+$tcl.Page   = New-Object Windows.Forms.TabPage -Property @{Text="Cleanup"; Padding='10,10,10,10'}
+$tcl.Status = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=36; TextAlign='MiddleLeft'; Text="Click Scan to find junk and temporary files."; Font=New-Object Drawing.Font("Segoe UI",12,[Drawing.FontStyle]::Bold)}
 $tcl.Opts   = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Top'; AutoSize=$true; AutoSizeMode='GrowAndShrink'; WrapContents=$true; Padding='0,0,0,6'}
 $oL = @{AutoSize=$true; Margin='0,7,6,0'}
 $tcl.AgeL   = New-Object Windows.Forms.Label -Property ($oL + @{Text="Delete files older than"})
 $tcl.Age    = New-Object Windows.Forms.ComboBox -Property @{DropDownStyle='DropDownList'; Width=90; Margin='0,3,18,0'}
 $TempAges = [ordered]@{ "1 hour" = 1/24; "1 day" = 1; "7 days" = 7; "30 days" = 30 }
 foreach ($k in $TempAges.Keys) { [void]$tcl.Age.Items.Add($k) }
+$tcl.RecL   = New-Object Windows.Forms.Label -Property ($oL + @{Text="Recycle Bin items older than"})
+$tcl.Rec    = New-Object Windows.Forms.ComboBox -Property @{DropDownStyle='DropDownList'; Width=90; Margin='0,3,18,0'}
+foreach ($k in @('7 days','14 days','30 days','60 days','90 days')) { [void]$tcl.Rec.Items.Add($k) }
 $tcl.ModeL  = New-Object Windows.Forms.Label -Property ($oL + @{Text="If a file can't be deleted"})
 $tcl.Mode   = New-Object Windows.Forms.ComboBox -Property @{DropDownStyle='DropDownList'; Width=230; Margin='0,3,0,0'}
 $TempModes = [ordered]@{ Ask = "List it so I can decide"; Skip = "Skip it"; Restart = "Delete it when the PC restarts" }
 foreach ($v in $TempModes.Values) { [void]$tcl.Mode.Items.Add($v) }
 $tcl.IgnBtn = New-Object Windows.Forms.Button -Property @{AutoSize=$true; MinimumSize='110,36'; Margin='0,0,8,6'; Text="Ignore list"}
-$tcl.Opts.Controls.AddRange(@($tcl.AgeL, $tcl.Age, $tcl.ModeL, $tcl.Mode))
+$tcl.Opts.Controls.AddRange(@($tcl.AgeL, $tcl.Age, $tcl.RecL, $tcl.Rec, $tcl.ModeL, $tcl.Mode))
 
-$tcl.List = New-Object Windows.Forms.ListView -Property @{View='Details'; CheckBoxes=$true; FullRowSelect=$true; Dock='Top'; Height=150; HideSelection=$false}
-foreach ($c in @(@("Location",210), @("Files",80), @("Size",90), @("Skipped",160), @("Folder",380))) { [void]$tcl.List.Columns.Add($c[0], $c[1]) }
+$tcl.List = New-Object Windows.Forms.ListView -Property @{View='Details'; CheckBoxes=$true; FullRowSelect=$true; Dock='Top'; Height=210; HideSelection=$false}
+foreach ($c in @(@("What to clean",230), @("Files",80), @("Size",90), @("Skipped / note",220), @("Folder",380))) { [void]$tcl.List.Columns.Add($c[0], $c[1]) }
 $bp = @{AutoSize=$true; MinimumSize='110,36'; Margin='0,0,8,6'}
 $tcl.Bar   = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Top'; AutoSize=$true; AutoSizeMode='GrowAndShrink'; WrapContents=$true; Padding='0,8,0,0'}
 $tcl.Scan  = New-Object Windows.Forms.Button -Property ($bp + @{Text="Scan"})
@@ -92,13 +95,14 @@ $tcl.Menu = New-Object Windows.Forms.ContextMenuStrip -Property @{ShowImageMargi
 $miFile = $tcl.Menu.Items.Add("This file"); $miFolder = $tcl.Menu.Items.Add("Everything in this folder"); $miExt = $tcl.Menu.Items.Add("All files of this type here")
 $tcl.Always.Add_Click({ $tcl.Menu.Show($tcl.Always, 0, $tcl.Always.Height) })
 
-# Put Temp Files right under Junk Files
-$others = @($tabs.TabPages | ForEach-Object { $_ }); $tabs.TabPages.Clear()
-foreach ($p in $others) { $tabs.TabPages.Add($p); if ($p -eq $junk.Page) { $tabs.TabPages.Add($tcl.Page) } }
+$tabs.TabPages.Add($tcl.Page)   # final page order is set in CleanSweep.ps1
 
 # ---------------------------------------------------------------- settings
 if (-not $settings.TempAge) { $settings.TempAge = "1 day" }
 if (-not $settings.TempMode) { $settings.TempMode = "Ask" }
+if (-not $settings.CleanRecycleDays) { $settings.CleanRecycleDays = 30 }
+$tcl.Rec.SelectedItem = "$($settings.CleanRecycleDays) days"; if ($tcl.Rec.SelectedIndex -lt 0) { $tcl.Rec.SelectedIndex = 2 }
+$tcl.Rec.Add_SelectedIndexChanged({ $settings.CleanRecycleDays = [int](([string]$tcl.Rec.SelectedItem) -replace '\D', ''); Save-Settings; $tcl.Clean.Enabled = $false })
 $tcl.Age.SelectedItem = [string]$settings.TempAge; if ($tcl.Age.SelectedIndex -lt 0) { $tcl.Age.SelectedIndex = 1 }
 $tcl.Mode.SelectedIndex = [math]::Max(0, @($TempModes.Keys).IndexOf([string]$settings.TempMode))
 $tcl.Age.Add_SelectedIndexChanged({ $settings.TempAge = [string]$tcl.Age.SelectedItem; Save-Settings; $tcl.Clean.Enabled = $false; $tcl.Status.Text = "Age changed - click Scan again." })
@@ -110,46 +114,24 @@ $global:CSIgnore = Get-TempIgnore; Update-IgnoreButton
 
 # ---------------------------------------------------------------- locations
 function Get-TempLocations {
-  $me = try { (Get-Item -LiteralPath $env:TEMP -Force).FullName.TrimEnd('\') } catch { $env:TEMP }
-  $rows = @(
-    @{ Name = "Your temp folder"; Paths = @($me); On = $true }
-    @{ Name = "Windows temp folder"; Paths = @("$env:WINDIR\Temp"); On = $true }
-  )
-  $mine = [Environment]::GetFolderPath('UserProfile')
-  $otherT = @(Get-ChildItem -LiteralPath (Split-Path $mine) -Directory -Force -ErrorAction Ignore |
-    Where-Object { $_.FullName -ne $mine -and $_.Name -notin 'Default','Default User','Public','All Users' -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
-    ForEach-Object { Join-Path $_.FullName "AppData\Local\Temp" } | Where-Object { (Test-Path -LiteralPath $_) -and $_ -ne $me })
-  if ($otherT) { $rows += @{ Name = "Other users' temp folders"; Paths = $otherT; On = $true } }
-  $rows += @{ Name = "Internet temporary files"; Paths = @("$env:LOCALAPPDATA\Microsoft\Windows\INetCache"); On = $true }
-  $rows += @{ Name = "DirectX shader cache"; Paths = @("$env:LOCALAPPDATA\D3DSCache"); On = $false; Note = "games rebuild it (may stutter briefly)" }
-  $rows | Where-Object { @($_.Paths | Where-Object { Test-Path -LiteralPath $_ }).Count }
+  $rows = foreach ($k in $targets.Keys) {
+    if (-not @($targets[$k] | Where-Object { $_ -and (Test-Path -Path $_) }).Count) { continue }
+    @{ Name = $k; Kind = 'paths'; Paths = @($targets[$k]); On = ($CleanDefaults -contains $k); Note = $CleanNotes[$k] }
+  }
+  # Leftover .tmp/.chk files on other drives (off by default - these drives are walked completely)
+  foreach ($d in @(Get-CimInstance Win32_LogicalDisk -Filter "DriveType=2 OR DriveType=3" -ErrorAction Ignore | Where-Object { $_.Size -gt 0 -and $_.DeviceID -ne $SysDrive } | Sort-Object DeviceID)) {
+    @{ Name = "Leftover temp files on $($d.DeviceID)"; Kind = 'drive'; Drive = $d.DeviceID; Paths = @("$($d.DeviceID)\"); On = $false; Note = ".tmp, .chk and similar files" }
+  }
+  @{ Name = "Recycle Bin (old items)"; Kind = 'recycle'; Paths = @(); On = $false; Note = "only items deleted more than the chosen days ago" }
+  $rows
 }
 function Load-TempList {
   $tcl.List.BeginUpdate(); $tcl.List.Items.Clear()
   foreach ($r in Get-TempLocations) {
     $i = $tcl.List.Items.Add($r.Name); $i.Checked = $r.On; $i.Tag = $r
-    [void]$i.SubItems.Add("-"); [void]$i.SubItems.Add("-"); [void]$i.SubItems.Add($(if ($r.Note) { $r.Note } else { "" })); [void]$i.SubItems.Add(($r.Paths | Select-Object -First 2) -join "; ")
+    [void]$i.SubItems.Add("-"); [void]$i.SubItems.Add("-"); [void]$i.SubItems.Add($(if ($r.Note) { $r.Note } else { "" })); [void]$i.SubItems.Add($(if ($r.Kind -eq 'recycle') { "All drives" } else { ($r.Paths | Select-Object -First 2) -join "; " }))
   }
   $tcl.List.EndUpdate()
-}
-
-# Walks a temp folder itself: never follows junctions or symbolic links (they could point outside the temp folder)
-function Get-TempFilesIn([string]$root, [datetime]$cut, $stat) {
-  $stack = New-Object System.Collections.Stack; $stack.Push($root); $n = 0
-  while ($stack.Count) {
-    $dir = $stack.Pop()
-    if ((++$n % 100) -eq 0) { $tcl.Status.Text = "Scanning $dir"; Check-Cancel }
-    $entries = try { ([IO.DirectoryInfo]$dir).GetFileSystemInfos() } catch { $stat.Unreadable++; @() }
-    foreach ($e in $entries) {
-      if ($e.Attributes -band [IO.FileAttributes]::Directory) {
-        if ($e.Attributes -band [IO.FileAttributes]::ReparsePoint) { $stat.Links++; continue }
-        $stack.Push($e.FullName); continue
-      }
-      if (Test-CSIgnored $e.FullName) { $stat.Ignored++; continue }
-      if ($e.LastWriteTime -gt $cut) { $stat.Recent++; continue }
-      $e
-    }
-  }
 }
 
 function Set-TempBusy([bool]$b) {
@@ -164,36 +146,26 @@ function Invoke-TempScan {
   Set-TempBusy $true; $total = 0; $count = 0
   try {
     foreach ($i in $tcl.List.Items) {
-      $r = $i.Tag; $stat = @{ Recent = 0; Ignored = 0; Links = 0; Unreadable = 0 }
+      $r = $i.Tag; $stat = New-CleanStat
       if (-not $i.Checked) { $i.SubItems[1].Text = "-"; $i.SubItems[2].Text = "-"; $r.Files = @(); continue }
       $tcl.Status.Text = "Scanning $($r.Name)..."; Check-Cancel
-      $files = @(foreach ($p in $r.Paths) { Get-TempFilesIn $p $cut $stat })
+      $files = @(switch ($r.Kind) {
+        'drive'   { Get-DriveJunk $r.Drive $cut $stat }
+        'recycle' { Get-OldRecycleItems ([int]$settings.CleanRecycleDays) }
+        default   { Get-CleanFiles $r.Paths $cut $stat }
+      })
       $sz = [long]0; foreach ($f in $files) { $sz += $f.Length }
       $r.Files = $files; $r.Size = $sz; $total += $sz; $count += $files.Count
       $i.SubItems[1].Text = "{0:N0}" -f $files.Count; $i.SubItems[2].Text = Fmt $sz
       $sk = @(); if ($stat.Recent) { $sk += "$($stat.Recent) recent" }; if ($stat.Ignored) { $sk += "$($stat.Ignored) ignored" }; if ($stat.Links) { $sk += "$($stat.Links) links" }
       $i.SubItems[3].Text = if ($sk) { $sk -join ", " } elseif ($r.Note) { $r.Note } else { "" }
     }
-    $tcl.Status.Text = "Found $(Fmt $total) in {0:N0} temp files older than $($tcl.Age.SelectedItem)." -f $count
+    $tcl.Status.Text = "Found $(Fmt $total) in {0:N0} files older than $($tcl.Age.SelectedItem)." -f $count
     Set-TempBusy $false; $tcl.Clean.Enabled = ($count -gt 0)
   } catch { Set-TempBusy $false; $tcl.Status.Text = "Scan cancelled." }
 }
 $tcl.Scan.Add_Click({ Invoke-TempScan })
 
-# Delete one file. Read-only files and very long paths are handled; anything else is reported, never forced.
-function Remove-TempFile([string]$p) {
-  for ($try = 0; $try -lt 2; $try++) {
-    try { [IO.File]::Delete($p); return $null }
-    catch {
-      $e = $_.Exception; while ($e -is [Management.Automation.MethodInvocationException] -and $e.InnerException) { $e = $e.InnerException }
-      if ($try -eq 0 -and $e -is [UnauthorizedAccessException]) {
-        try { $a = [IO.File]::GetAttributes($p); if ($a -band [IO.FileAttributes]::ReadOnly) { [IO.File]::SetAttributes($p, ($a -band -bnot [IO.FileAttributes]::ReadOnly)); continue } } catch {}
-      }
-      if ($try -eq 0 -and $e -is [IO.PathTooLongException] -and -not $p.StartsWith('\\?\')) { $p = '\\?\' + $p; continue }
-      return $e
-    }
-  }
-}
 function Get-FailInfo($e, [string]$path) {
   $code = $e.HResult -band 0xFFFF
   if ($e -is [IO.IOException] -and $code -in 32, 33) {
@@ -214,21 +186,12 @@ function Update-ProbHeader {
   $tcl.PHdr.Text = if ($n) { "Files that could not be deleted ($n)" } else { "Files that could not be deleted" }
   foreach ($b in @($tcl.Retry, $tcl.Reboot, $tcl.Skip, $tcl.Always, $tcl.Open, $tcl.PAll)) { $b.Enabled = ($n -gt 0) }
 }
-# Remove now-empty folders inside a temp root (never the root, never links)
-function Remove-EmptyTempDirs([string]$root, [datetime]$cut) {
-  $dirs = New-Object System.Collections.Generic.List[string]; $stack = New-Object System.Collections.Stack; $stack.Push($root)
-  while ($stack.Count) { $d = $stack.Pop(); try { foreach ($s in ([IO.DirectoryInfo]$d).GetDirectories()) { if (-not ($s.Attributes -band [IO.FileAttributes]::ReparsePoint)) { $dirs.Add($s.FullName); $stack.Push($s.FullName) } } } catch {} }
-  foreach ($d in ($dirs | Sort-Object Length -Descending)) {
-    try { $di = [IO.DirectoryInfo]$d; if ($di.LastWriteTime -lt $cut -and -not $di.EnumerateFileSystemInfos().GetEnumerator().MoveNext()) { $di.Delete() } } catch {}
-  }
-}
-
 function Invoke-TempClean {
   $mode = @($TempModes.Keys)[$tcl.Mode.SelectedIndex]
   $sel = @($tcl.List.Items | Where-Object { $_.Checked -and $_.Tag.Files })
   if (-not $sel) { return }
   $n = ($sel | ForEach-Object { $_.Tag.Files.Count } | Measure-Object -Sum).Sum
-  $q = "Delete {0:N0} temp files from: $(($sel | ForEach-Object Text) -join ', ')?" -f $n
+  $q = "Delete {0:N0} files from: $(($sel | ForEach-Object Text) -join ', ')?" -f $n
   if ([CSMsg]::Show($q, "Confirm", "YesNo", "Warning") -ne "Yes") { return }
   Set-TempBusy $true; $freed = [long]0; $done = 0; $failed = 0; $atBoot = 0; $k = 0
   $cut = (Get-Date).AddDays(-$TempAges[[string]$tcl.Age.SelectedItem])
@@ -238,14 +201,14 @@ function Invoke-TempClean {
       $tcl.Status.Text = "Cleaning $($i.Text)..."
       foreach ($f in $i.Tag.Files) {
         if ((++$k % 50) -eq 0) { $tcl.Prog.Value = [int](100 * $k / $n); Check-Cancel }
-        $err = Remove-TempFile $f.FullName
+        $err = Remove-CleanItem $f
         if (-not $err) { $freed += $f.Length; $done++; continue }
         $failed++
         if ($mode -eq 'Skip') { continue }
-        if ($mode -eq 'Restart' -and [CSLocks]::DeleteAtRestart($f.FullName)) { $atBoot++; continue }
+        if ($mode -eq 'Restart' -and -not $f.PSObject.Properties['Recycle'] -and [CSLocks]::DeleteAtRestart($f.FullName)) { $atBoot++; continue }
         Add-TempProblem $f (Get-FailInfo $err $f.FullName)
       }
-      foreach ($p in $i.Tag.Paths) { Remove-EmptyTempDirs $p $cut }
+      if ($i.Tag.Kind -eq 'paths' -and $i.Text -match 'Temp') { foreach ($p in $i.Tag.Paths) { Remove-EmptyDirs $p $cut } }
       $i.Tag.Files = @(); $i.SubItems[1].Text = "Cleaned"
     }
     $msg = "Freed $(Fmt $freed) ({0:N0} files)." -f $done
@@ -258,6 +221,8 @@ function Invoke-TempClean {
       default   { " $failed could not be deleted - see the list below." }
     }
   }
+  $free = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$SysDrive'" -ErrorAction Ignore
+  if ($free) { $msg += "  $SysDrive now has $(Fmt $free.FreeSpace) free." }
   $tcl.Status.Text = $msg
 }
 $tcl.Clean.Add_Click({ Invoke-TempClean })
@@ -272,7 +237,7 @@ function Invoke-TempRetry {
   foreach ($it in $items) {
     $p = $it.Tag.Path
     if (-not (Test-Path -LiteralPath $p)) { $tcl.Probs.Items.Remove($it); $ok++; continue }
-    $err = Remove-TempFile $p
+    $err = Remove-CleanFile $p
     if (-not $err) { $freed += $it.Tag.Size; $tcl.Probs.Items.Remove($it); $ok++ }
     else { $info = Get-FailInfo $err $p; $it.SubItems[2].Text = $info.Reason; $it.SubItems[3].Text = $info.Who }
   }
@@ -313,7 +278,7 @@ function Format-IgnoreRule([string]$r) {
 }
 function Show-IgnoreList {
   $f = New-Object Windows.Forms.Form -Property @{Text="Ignore list"; Size='720,420'; StartPosition='CenterParent'; Font=$form.Font; Icon=$form.Icon; MinimizeBox=$false; ShowInTaskbar=$false}
-  $hdr = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=44; Padding='12,10,12,0'; Text="CleanSweep never deletes these files, in the Temp Files page or during automatic cleanup."}
+  $hdr = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=44; Padding='12,10,12,0'; Text="CleanSweep never deletes these files, on the Cleanup page or during automatic cleanup."}
   $lb = New-Object Windows.Forms.ListBox -Property @{Dock='Fill'; SelectionMode='MultiExtended'; BorderStyle='None'; IntegralHeight=$false; BackColor=$Theme.Input; ForeColor=$Theme.Text}
   $rules = @(Get-TempIgnore); foreach ($r in $rules) { [void]$lb.Items.Add((Format-IgnoreRule $r)) }
   $bar = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Bottom'; Height=56; FlowDirection='RightToLeft'; Padding='12,10,12,10'; BackColor=$Theme.Side}

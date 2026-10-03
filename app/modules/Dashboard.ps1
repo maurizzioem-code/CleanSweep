@@ -117,7 +117,7 @@ $HealthChecks = [ordered]@{
 
   "Junk files" = {
     $sz = Get-FolderSize @($env:TEMP, "$env:WINDIR\Temp", "$env:WINDIR\SoftwareDistribution\Download")
-    if ($sz -gt 2GB) { New-Finding "Junk files" "Warning" "About $(Fmt $sz) of temporary files" "These are safe to remove with the Junk Files tab." "tab:junk" "Clean junk files" }
+    if ($sz -gt 2GB) { New-Finding "Junk files" "Warning" "About $(Fmt $sz) of temporary files" "These are safe to remove on the Cleanup page." "tab:junk" "Open Cleanup" }
     else { New-Finding "Junk files" "OK" "About $(Fmt $sz) of temporary files" }
   }
 
@@ -419,7 +419,7 @@ $dash.List.Add_SelectedIndexChanged({
 # Recommendation actions only navigate or open Windows' own tools
 function Invoke-FindingAction($action) {
   switch -Regex ($action) {
-    '^tab:junk$'   { $tabs.SelectedTab = $junk.Page }
+    '^tab:junk$'   { $tabs.SelectedTab = $tcl.Page }
     '^tab:net$'    { $tabs.SelectedTab = $wifi.Page }
     '^tab:repair$' { $tabs.SelectedTab = $rep.Page }
     '^tab:drives$' { $tabs.SelectedTab = $drv.Page; foreach ($i in $drv.List.Items) { if ($i.Tag.Letter -eq $SysDrive) { $i.Checked = $true } } }
@@ -451,9 +451,10 @@ function Invoke-QuickAction($key) {
   $tile = $dash.Tiles[$key]
   switch ($key) {
     'clean' {
-      Load-Drives; foreach ($cb in $script:DriveChecks) { $cb.Checked = ($cb.Tag -eq $SysDrive) }
-      $tabs.SelectedTab = $junk.Page; [Windows.Forms.Application]::DoEvents(); $junk.Scan.PerformClick()
-      if ($junk.Clean.Enabled) { $junk.Clean.PerformClick() }
+      # Recommended categories on the Windows drive, same rules as the Cleanup page
+      foreach ($i in $tcl.List.Items) { $i.Checked = [bool]$i.Tag.On }
+      $tabs.SelectedTab = $tcl.Page; [Windows.Forms.Application]::DoEvents(); Invoke-TempScan
+      if ($tcl.Clean.Enabled) { Invoke-TempClean }
     }
     'space' { Invoke-FindingAction 'tab:drives'; [Windows.Forms.Application]::DoEvents(); foreach ($i in $drv.List.Items) { $i.Checked = ($i.Tag.Letter -eq $SysDrive) }; Update-DriveButtons; $drv.Large.PerformClick() }
     'repair' { $tabs.SelectedTab = $rep.Page; [Windows.Forms.Application]::DoEvents(); $rep.Rec.PerformClick() }

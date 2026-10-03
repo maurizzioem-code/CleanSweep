@@ -7,15 +7,7 @@ $AppRoot = Split-Path $PSScriptRoot
 $AcHistoryFile = Join-Path $AppDir "autoclean-history.csv"
 $AcDays = @('Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday')
 $AcFreqs = [ordered]@{ Daily = "Every day"; Weekly = "Every week"; Monthly = "Every 4 weeks" }
-# Safe to clean unattended; the rest are offered but unticked by default
-$AcDefaultCats = @("User Temp Files", "Windows Temp Files", "Windows Update Cache", "Crash Dumps & Error Reports", "Delivery Optimization")
-$AcCatNotes = @{
-  "Prefetch Files"  = "not recommended: Windows uses these to start apps faster"
-  "Thumbnail Cache" = "folders with pictures open slowly until rebuilt"
-  "Chrome Cache"    = "websites load a little slower at first"
-  "Edge Cache"      = "websites load a little slower at first"
-  "Firefox Cache"   = "websites load a little slower at first"
-}
+$AcDefaultCats = $CleanDefaults; $AcCatNotes = $CleanNotes   # shared with the Cleanup page (JunkTargets.ps1)
 
 function Get-AutoCleanConfig {
   $c = @{ Enabled = $false; Freq = "Weekly"; Day = "Sunday"; Minutes = 19 * 60; Cats = $AcDefaultCats; RecycleDays = 0

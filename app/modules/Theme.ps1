@@ -233,7 +233,7 @@ function Initialize-Shell {
   $bt = New-Object Windows.Forms.Label -Property @{Text="CleanSweep"; Location='56,13'; AutoSize=$true; Font=(DisplayFont 13 'Bold'); ForeColor=$Theme.Text}
   $bv = New-Object Windows.Forms.Label -Property @{Text="Version $Version"; Location='57,37'; AutoSize=$true; Font=(UiFont 8.5); ForeColor=$Theme.Sub}
   $brand.Controls.AddRange(@($logo, $bt, $bv))
-  $icons = @{ 'Dashboard'=$Glyph.Home; 'Junk Files'=$Glyph.Junk; 'Temp Files'=[char]0xE8B7; 'Drives'=$Glyph.Drive; 'Registry'=$Glyph.Registry; 'Broken Shortcuts'=$Glyph.Link; 'Network Optimizer'=$Glyph.Network; 'Repair'=$Glyph.Repair; 'Updates'=$Glyph.Update }
+  $icons = @{ 'Dashboard'=$Glyph.Home; 'Cleanup'=$Glyph.Junk; 'Drives'=$Glyph.Drive; 'Registry'=$Glyph.Registry; 'Broken Shortcuts'=$Glyph.Link; 'Network Optimizer'=$Glyph.Network; 'Repair'=$Glyph.Repair; 'Updates & settings'=$Glyph.Update }
   $pages = @($tabs.TabPages | ForEach-Object { $_ })
   # Dock=Top stacks in reverse, so add the last page first
   for ($i = $pages.Count - 1; $i -ge 0; $i--) { $g = $icons[$pages[$i].Text]; if (-not $g) { $g = $Glyph.Pc }; $side.Controls.Add((New-NavItem $pages[$i] $g)) }

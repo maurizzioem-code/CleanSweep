@@ -22,9 +22,7 @@ $drv.Bar.Controls.AddRange(@($drv.Junk, $drv.Large, $drv.Check, $drv.Opt, $drv.S
 $drv.Page.Controls.Add($drv.List); $drv.Page.Controls.Add($drv.Prog); $drv.Page.Controls.Add($drv.Out); $drv.Page.Controls.Add($drv.Bar); $drv.Page.Controls.Add($drv.Status)
 $drv.UI = @{ Out=$drv.Out; Prog=$drv.Prog; Status=$drv.Status }
 
-# Put the Drives tab right after Junk Files
-$others = @($tabs.TabPages | ForEach-Object { $_ }); $tabs.TabPages.Clear()
-foreach ($p in $others) { $tabs.TabPages.Add($p); if ($p -eq $junk.Page) { $tabs.TabPages.Add($drv.Page) } }
+$tabs.TabPages.Add($drv.Page)   # final page order is set in CleanSweep.ps1
 
 $PartitionNames = @{ 'System'='EFI system partition'; 'Recovery'='Recovery partition'; 'Reserved'='Microsoft reserved'; 'Basic'='Partition'; 'IFS'='Partition'; 'FAT32'='Partition' }
 function Get-DriveRows {
@@ -96,8 +94,11 @@ function Test-DrivesTicked { if (Get-CheckedDrives) { return $true }; [void][CSM
 $drv.Junk.Add_Click({
   if (-not (Test-DrivesTicked)) { return }
   $want = @(Get-CheckedDrives | ForEach-Object Letter)
-  Load-Drives; foreach ($cb in $script:DriveChecks) { $cb.Checked = $want -contains $cb.Tag }
-  $tabs.SelectedTab = $junk.Page; [Windows.Forms.Application]::DoEvents(); $junk.Scan.PerformClick()
+  # Windows drive: the recommended junk categories; other drives: their leftover temp files
+  foreach ($i in $tcl.List.Items) {
+    $i.Checked = switch ($i.Tag.Kind) { 'drive' { $want -contains $i.Tag.Drive } 'paths' { ($want -contains $SysDrive) -and [bool]$i.Tag.On } default { $false } }
+  }
+  $tabs.SelectedTab = $tcl.Page; [Windows.Forms.Application]::DoEvents(); Invoke-TempScan
 })
 
 function Invoke-DriveTool($kind) {
@@ -205,13 +206,13 @@ function Show-LargeFiles($files, $letters) {
   $del.Add_Click({
     $lv = $script:LF.Lv; $top = $script:LF.Top
     $items = @($lv.CheckedItems); $sum = ($items | ForEach-Object { $_.Tag.Size } | Measure-Object -Sum).Sum
-    if ([CSMsg]::Show("Move $($items.Count) file(s) ($(Fmt $sum)) to the Recycle Bin?`n`nYou can restore them from the Recycle Bin. Space is freed when the Recycle Bin is emptied (Junk Files tab).","CleanSweep","YesNo","Question") -ne 'Yes') { return }
+    if ([CSMsg]::Show("Move $($items.Count) file(s) ($(Fmt $sum)) to the Recycle Bin?`n`nYou can restore them from the Recycle Bin. Space is freed when you empty the Recycle Bin.","CleanSweep","YesNo","Question") -ne 'Yes') { return }
     Add-Type -AssemblyName Microsoft.VisualBasic; $ok = 0
     foreach ($it in $items) {
       try { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($it.Tag.Path, 'OnlyErrorDialogs', 'SendToRecycleBin'); $lv.Items.Remove($it); $ok++ }
       catch { [void][CSMsg]::Show("Could not move $($it.Tag.Name): $($_.Exception.Message)","CleanSweep","OK","Warning") }
     }
-    $top.Text = "Moved $ok file(s) to the Recycle Bin. Empty it from the Junk Files tab to free the space."
+    $top.Text = "Moved $ok file(s) to the Recycle Bin. Empty the Recycle Bin to free the space."
   })
   Use-DarkDialog $f; $top.ForeColor = $Theme.Text
   if (-not $TestMode) { [void]$f.ShowDialog($form) } else { $f.Show($form); [Windows.Forms.Application]::DoEvents() }   # tests drive it non-modally

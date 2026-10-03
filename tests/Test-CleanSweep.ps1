@@ -111,29 +111,45 @@ Show-Tab $dash.Page
 Step "Dashboard: battery report action" { if (Get-CimInstance Win32_Battery) { Invoke-FindingAction 'battery' } else { Note "    no battery on this VM - skipped" } }
 Show-Tab $dash.Page; Shot "dashboard-selected"
 
-# ---------------------------------------------------------------- junk files
-Show-Tab $junk.Page
-Step "Junk: drive picker lists drives" {
-  Note ("    drives: " + (($script:DriveChecks | ForEach-Object Text) -join ' | '))
-  if (-not $script:DriveChecks) { throw "No drives listed" }
+# ---------------------------------------------------------------- cleanup (junk + temp files, merged in 4.3)
+Show-Tab $tcl.Page
+Step "Cleanup: categories" {
+  foreach ($i in $tcl.List.Items) { Note "    [$(if ($i.Checked) { 'x' } else { ' ' })] $($i.Text)  ($($i.Tag.Kind))" }
+  $names = @($tcl.List.Items | ForEach-Object Text)
+  if ($names -contains "Prefetch Files") { throw "Prefetch should be gone" }
+  $rb = @($tcl.List.Items | Where-Object { $_.Tag.Kind -eq 'recycle' })
+  if (-not $rb -or $rb[0].Checked) { throw "Recycle Bin row should exist and be unticked by default" }
+  if (-not ($names -contains "User Temp Files")) { throw "temp row missing" }
 }
-Step "Junk: scan system drive" { $junk.Scan.PerformClick(); Note "    $($junk.Status.Text)"; foreach ($i in $junk.List.Items) { Note "      $($i.Text): $($i.SubItems[1].Text)" } }
-Shot "junk-after-scan"
-Step "Junk: scan all drives (incl. other drives)" {
-  foreach ($c in $script:DriveChecks) { $c.Checked = $true }
-  $junk.Scan.PerformClick(); Note "    $($junk.Status.Text)"; foreach ($i in $junk.List.Items) { Note "      $($i.Text): $($i.SubItems[1].Text)" }
+Step "Cleanup: scan recommended" { Invoke-TempScan; Note "    $($tcl.Status.Text)"; foreach ($i in $tcl.List.Items) { if ($i.Checked) { Note "      $($i.Text): $($i.SubItems[1].Text) files, $($i.SubItems[2].Text) | $($i.SubItems[3].Text)" } } }
+Shot "cleanup-after-scan"
+Step "Cleanup: scan everything (all drives, Recycle Bin)" {
+  foreach ($i in $tcl.List.Items) { $i.Checked = $true }
+  Invoke-TempScan; Note "    $($tcl.Status.Text)"; foreach ($i in $tcl.List.Items) { Note "      $($i.Text): $($i.SubItems[1].Text) files, $($i.SubItems[2].Text) | $($i.SubItems[3].Text)" }
 }
-Shot "junk-all-drives"
-Step "Junk: clean" { $junk.Clean.PerformClick(); Note "    $($junk.Status.Text)" }
-Shot "junk-after-clean"
-Step "Junk: cancel button stops a scan" {
-  foreach ($c in $script:DriveChecks) { $c.Checked = $true }
+Step "Cleanup: clean recommended" {
+  foreach ($i in $tcl.List.Items) { $i.Checked = [bool]$i.Tag.On }
+  Invoke-TempScan; Invoke-TempClean; Note "    $($tcl.Status.Text)"; Note "    could not delete: $($tcl.Probs.Items.Count)"
+  foreach ($it in ($tcl.Probs.Items | Select-Object -First 5)) { Note "      $($it.Text) | $($it.SubItems[2].Text) | $($it.SubItems[3].Text)" }
+}
+Shot "cleanup-after-clean"
+Step "Cleanup: cancel button stops a scan" {
+  foreach ($i in $tcl.List.Items) { $i.Checked = $true }
   $script:cancelTimer = New-Object Windows.Forms.Timer; $script:cancelTimer.Interval = 150
-  $script:cancelTimer.Add_Tick({ $script:cancelTimer.Stop(); if ($junk.Stop.Enabled) { $junk.Stop.PerformClick() } })
-  $script:cancelTimer.Start()
-  $junk.Scan.PerformClick(); $script:cancelTimer.Stop(); Note "    $($junk.Status.Text)"
+  $script:cancelTimer.Add_Tick({ $script:cancelTimer.Stop(); if ($tcl.Stop.Enabled) { $tcl.Stop.PerformClick() } })
+  $script:cancelTimer.Start(); Invoke-TempScan; $script:cancelTimer.Stop(); Note "    $($tcl.Status.Text)"
+  if ($tcl.Status.Text -ne "Scan cancelled.") { Note "    (scan finished before cancel)" }
 }
-foreach ($c in $script:DriveChecks) { $c.Checked = ($c.Tag -eq $SysDrive) }
+foreach ($i in $tcl.List.Items) { $i.Checked = [bool]$i.Tag.On }
+Step "Cleanup: old Recycle Bin items only" {
+  $f = "$env:TEMP\CleanSweepRecycleTest.txt"; Set-Content $f 'x'
+  Add-Type -AssemblyName Microsoft.VisualBasic
+  [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($f, 'OnlyErrorDialogs', 'SendToRecycleBin')
+  $now = @(Get-OldRecycleItems 0 @($SysDrive)); $old = @(Get-OldRecycleItems 30 @($SysDrive))
+  Note "    items in bin (any age): $($now.Count)   older than 30 days: $($old.Count)"
+  if (-not $now.Count) { throw "test item not found in the Recycle Bin" }
+  if ($old | Where-Object { (Get-Item -LiteralPath $_.Info -Force).LastWriteTime -gt (Get-Date).AddDays(-30) }) { throw "recent item treated as old" }
+}
 
 # ---------------------------------------------------------------- registry
 Show-Tab $reg.Page
@@ -233,7 +249,7 @@ Step "Drives: find large files" {
   [Windows.Forms.Application]::DoEvents(); $script:LargeForm.Close()
   Note "    after Recycle Bin: test file exists = $(Test-Path $big)"; if (Test-Path $big) { Write-Error "File not moved"; Remove-Item $big -Force }
 }
-Step "Drives: Clean junk on ticked drives" { $drv.Junk.PerformClick(); Note "    tab: $($tabs.SelectedTab.Text)  junk drives: $((Get-SelectedDrives) -join ',')  $($junk.Status.Text)" }
+Step "Drives: Clean junk on ticked drives" { $drv.Junk.PerformClick(); Note "    tab: $($tabs.SelectedTab.Text)  ticked: $((@($tcl.List.CheckedItems | ForEach-Object Text)) -join ', ')  | $($tcl.Status.Text)"; if ($tabs.SelectedTab -ne $tcl.Page) { throw "did not open Cleanup" } }
 Show-Tab $drv.Page; Shot "drives-after"
 
 # ---------------------------------------------------------------- repair
@@ -345,11 +361,11 @@ Step "Schedule: turn off removes the task" {
 }
 
 # ---------------------------------------------------------------- temp file cleaner
-Step "Temp: page lists temp locations" {
+Step "Temp: Cleanup page has the temp locations" {
   $tabs.SelectedTab = $tcl.Page; [Windows.Forms.Application]::DoEvents()
   foreach ($i in $tcl.List.Items) { Note "    [$(if ($i.Checked) { 'x' } else { ' ' })] $($i.Text): $($i.Tag.Paths -join '; ')" }
   $names = @($tcl.List.Items | ForEach-Object Text)
-  if ($names -notcontains "Your temp folder" -or $names -notcontains "Windows temp folder") { throw "temp locations missing" }
+  if ($names -notcontains "User Temp Files" -or $names -notcontains "Windows Temp Files") { throw "temp locations missing" }
 }
 Step "Temp: clean, and list files that can't be deleted" {
   $d = Join-Path ((Get-Item $env:TEMP).FullName) "CleanSweepTempTest"; if (Test-Path "$d\link") { cmd /c rmdir "$d\link" | Out-Null }
@@ -364,7 +380,7 @@ Step "Temp: clean, and list files that can't be deleted" {
   $script:TT = @{ Dir = $d; Outside = $outside; Lock = [IO.File]::Open("$d\locked.txt", 'Open', 'Read', 'None') }
   Set-TempIgnore @("file:$d\keep.log")
   $tcl.Age.SelectedItem = "1 day"; $tcl.Mode.SelectedIndex = 0
-  foreach ($i in $tcl.List.Items) { $i.Checked = ($i.Text -eq "Your temp folder") }
+  foreach ($i in $tcl.List.Items) { $i.Checked = ($i.Text -eq "User Temp Files") }
   Invoke-TempScan; Note "    scan: $($tcl.Status.Text) | $($tcl.List.Items[0].SubItems[3].Text)"
   Invoke-TempClean; Note "    clean: $($tcl.Status.Text)"
   foreach ($it in $tcl.Probs.Items) { Note "    can't delete: $($it.Text) | $($it.SubItems[2].Text) | used by: $($it.SubItems[3].Text)" }
@@ -420,6 +436,11 @@ Step "Temp: 'Skip it' mode" {
 if ($script:TT) { cmd /c rmdir "$($script:TT.Dir)\link" | Out-Null; Remove-Item -Recurse -Force $script:TT.Dir, $script:TT.Outside -ErrorAction Ignore }
 Set-TempIgnore @()
 
+Step "Settings: Registry cleaner is an advanced option" {
+  Note "    advanced toggle: '$($upd.Adv.Text)' checked=$($upd.Adv.Checked)"
+  if ($upd.Adv.Checked) { throw "should be off by default" }
+  $upd.Adv.Checked = $true; if (-not $settings.ShowAdvanced) { throw "setting not saved" }; $upd.Adv.Checked = $false
+}
 Step "Updates: check" { Check-Update $false; Note "    $($upd.Status.Text)" }
 Shot "updates"
 

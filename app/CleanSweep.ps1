@@ -1,7 +1,7 @@
 # CleanSweep - a simple disk, registry and shortcut cleaner for Windows 11
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Windows.Forms.Application]::EnableVisualStyles()
-$Version = "4.2"
+$Version = "4.3"
 $TestMode = ($env:CLEANSWEEP_TEST -eq "1")   # automated tests: message boxes answer themselves, nothing waits for a click
 # All message boxes go through CSMsg so automated tests can answer them
 if (-not ("CSMsg" -as [type])) {
@@ -92,126 +92,8 @@ function Set-Busy($t, [bool]$busy) {
 $L = $env:LOCALAPPDATA; $W = $env:WINDIR
 $SysDrive = $env:SystemDrive.TrimEnd('\')           # usually C:
 $MySid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-. (Join-Path $PSScriptRoot "modules\JunkTargets.ps1")   # $targets and Get-Items
-# This user's Recycle Bin folder on a given drive
-function Get-RecycleFiles($drive) { Get-ChildItem -LiteralPath "$drive\`$Recycle.Bin\$MySid" -Recurse -Force -File -ErrorAction Ignore }
-
-# Leftover temp files on any drive: walks folders itself so it never follows junctions/links
-$skipDirs = '^(\$Recycle\.Bin|System Volume Information|Windows|Program Files|Program Files \(x86\)|ProgramData|Recovery|\$WinREAgent|\$SysReset|Config\.Msi|MSOCache)$'
-$junkNames = '(\.tmp|\.temp|\._mp|\.chk|\.gid|\.old\.tmp)$|^(Thumbs\.db|ehthumbs\.db|~\$.+)$'
-function Get-DriveJunk($drive) {
-  $cut = (Get-Date).AddDays(-1)    # leave anything touched in the last day (may be in use)
-  $stack = New-Object System.Collections.Stack; $stack.Push("$drive\"); $n = 0
-  while ($stack.Count) {
-    $dir = $stack.Pop()
-    if ((++$n % 200) -eq 0) { $junk.Status.Text = "Scanning $dir"; Check-Cancel }
-    foreach ($e in (Get-ChildItem -LiteralPath $dir -Force -ErrorAction Ignore)) {
-      if ($e.PSIsContainer) {
-        if ($e.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
-        if ($dir.Length -le 3 -and $e.Name -match $skipDirs) { continue }
-        if ($e.Name -match '^FOUND\.\d{3}$') { Get-ChildItem -LiteralPath $e.FullName -Force -File -Filter *.chk -ErrorAction Ignore; continue }
-        $stack.Push($e.FullName)
-      } elseif ($e.Name -match $junkNames -and $e.LastWriteTime -lt $cut) { $e }
-    }
-  }
-}
-
-$junk = New-Tab "Junk Files" @(,@("Category",480)) "Choose drives, then click Scan to find junk files."
-[void]$junk.List.Columns.Add("Size",200)
-$disk = New-Object Windows.Forms.Label -Property @{AutoSize=$true; Margin='12,9,0,0'}
-$junk.Bar.Controls.Add($disk)
-
-# ---- drive picker
-$driveLabel = New-Object Windows.Forms.Label -Property @{Text="Drives:"; AutoSize=$true; Margin='0,6,6,0'; Font=New-Object Drawing.Font("Segoe UI",10,[Drawing.FontStyle]::Bold)}
-$driveFlow  = New-Object Windows.Forms.FlowLayoutPanel -Property @{AutoSize=$true; AutoSizeMode='GrowAndShrink'; WrapContents=$true; Margin='0,0,0,0'}
-$driveRefresh = New-Object Windows.Forms.Button -Property @{Text="Refresh drives"; AutoSize=$true; MinimumSize='130,30'; Margin='6,0,0,0'}
-$junk.Extra.Controls.AddRange(@($driveLabel, $driveFlow, $driveRefresh))
-$script:DriveChecks = @()
-
-function Get-Drives {
-  # Local disks (3) and removable drives like USB sticks and SD cards (2) that have media inserted
-  Get-CimInstance Win32_LogicalDisk -Filter "DriveType=2 OR DriveType=3" -ErrorAction Ignore | Where-Object { $_.Size -gt 0 } | Sort-Object DeviceID
-}
-function Load-Drives {
-  $prev = @{}; foreach ($c in $script:DriveChecks) { $prev[$c.Tag] = $c.Checked }
-  $driveFlow.Controls.Clear(); $script:DriveChecks = @()
-  foreach ($d in Get-Drives) {
-    $name = if ($d.VolumeName) { $d.VolumeName } elseif ($d.DeviceID -eq $SysDrive) { "Windows" } elseif ($d.DriveType -eq 2) { "USB drive" } else { "Local Disk" }
-    $cb = New-Object Windows.Forms.CheckBox -Property @{AutoSize=$true; Margin='0,4,14,0'; Tag=$d.DeviceID
-      Text = "$($d.DeviceID) $name ($(Fmt $d.FreeSpace) free of $(Fmt $d.Size))"}
-    $cb.Checked = if ($prev.ContainsKey($d.DeviceID)) { $prev[$d.DeviceID] } else { $d.DeviceID -eq $SysDrive }
-    $cb.Add_CheckedChanged({ Load-JunkList })
-    $driveFlow.Controls.Add($cb); $script:DriveChecks += $cb
-  }
-  Load-JunkList
-}
-function Get-SelectedDrives { @($script:DriveChecks | Where-Object Checked | ForEach-Object Tag) }
-
-# Rebuild the category list for the chosen drives
-function Load-JunkList {
-  $junk.List.BeginUpdate(); $junk.List.Items.Clear()
-  foreach ($d in Get-SelectedDrives) {
-    if ($d -eq $SysDrive) {
-      foreach ($k in $targets.Keys) { $i = $junk.List.Items.Add($k); [void]$i.SubItems.Add("-"); $i.Checked = $true; $i.Tag = @{Kind='paths'; Paths=$targets[$k]; Drive=$d} }
-    } else {
-      $i = $junk.List.Items.Add("Temporary and leftover files ($d)"); [void]$i.SubItems.Add("-"); $i.Checked = $true; $i.Tag = @{Kind='drivejunk'; Drive=$d}
-    }
-    $i = $junk.List.Items.Add("Recycle Bin ($d)"); [void]$i.SubItems.Add("-"); $i.Checked = $true; $i.Tag = @{Kind='recycle'; Drive=$d}
-  }
-  $junk.List.EndUpdate(); $junk.Clean.Enabled = $false
-  $sel = Get-SelectedDrives
-  $junk.Status.Text = if ($sel) { "Click Scan to find junk on " + ($sel -join ", ") + "." } else { "Tick at least one drive to scan." }
-  Upd-Disk
-}
-function Upd-Disk {
-  $parts = foreach ($d in (Get-Drives | Where-Object { (Get-SelectedDrives) -contains $_.DeviceID })) { "$($d.DeviceID) " + (Fmt $d.FreeSpace) + " free" }
-  $disk.Text = $parts -join "   "
-}
-$driveRefresh.Add_Click({ Load-Drives })
-$junk.Extra.SetFlowBreak($driveRefresh, $true)
-Load-Drives
-
-$junk.Scan.Add_Click({
-  if (-not (Get-SelectedDrives)) { [void][CSMsg]::Show("Tick at least one drive first.","CleanSweep","OK","Information"); return }
-  Set-Busy $junk $true; $driveFlow.Enabled = $false; $driveRefresh.Enabled = $false; $total = 0
-  try {
-    foreach ($i in $junk.List.Items) {
-      $junk.Status.Text = "Scanning $($i.Text)..."; Check-Cancel
-      $t = $i.Tag
-      $files = @(switch ($t.Kind) {
-        'paths'     { Get-Items $t.Paths | ForEach-Object { Check-Cancel; $_ } }
-        'recycle'   { Get-RecycleFiles $t.Drive }
-        'drivejunk' { Get-DriveJunk $t.Drive }
-      })
-      $sz = ($files | Measure-Object Length -Sum).Sum; if (-not $sz) { $sz = 0 }
-      $t.Size = $sz; if ($t.Kind -eq 'drivejunk') { $t.Files = $files }
-      $i.SubItems[1].Text = (Fmt $sz) + $(if ($t.Kind -eq 'drivejunk') { "  ($($files.Count) files)" } else { "" }); $total += $sz
-    }
-    $junk.Status.Text = "Found " + (Fmt $total) + " of junk on " + ((Get-SelectedDrives) -join ", ") + "."; Set-Busy $junk $false; $junk.Clean.Enabled = $true
-  } catch { Set-Busy $junk $false; $junk.Status.Text = "Scan cancelled." }
-  $driveFlow.Enabled = $true; $driveRefresh.Enabled = $true
-})
-$junk.Clean.Add_Click({
-  if ([CSMsg]::Show("Delete the selected junk files on " + ((Get-SelectedDrives) -join ", ") + "?","Confirm","YesNo","Warning") -ne "Yes") { return }
-  Set-Busy $junk $true; $driveFlow.Enabled = $false; $driveRefresh.Enabled = $false; $freed = 0
-  try {
-    foreach ($i in $junk.List.Items) {
-      if (-not $i.Checked) { continue }
-      $junk.Status.Text = "Cleaning $($i.Text)..."; Check-Cancel
-      $t = $i.Tag
-      switch ($t.Kind) {
-        'recycle'   { Clear-RecycleBin -DriveLetter $t.Drive.TrimEnd(':') -Force -ErrorAction Ignore; $freed += [long]$t.Size }
-        'drivejunk' { foreach ($f in $t.Files) { Check-Cancel; try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $freed += $f.Length } catch {} } }
-        default     { Get-Items $t.Paths | ForEach-Object { Check-Cancel; $len = $_.Length; try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop; $freed += $len } catch {} } }
-      }
-      $i.SubItems[1].Text = "Cleaned"
-    }
-    $junk.Status.Text = "Done. Freed " + (Fmt $freed) + " (files in use were skipped)."
-  } catch { $junk.Status.Text = "Cleaning stopped. Freed " + (Fmt $freed) + " before cancelling." }
-  $msg = $junk.Status.Text
-  Set-Busy $junk $false; $driveFlow.Enabled = $true; $driveRefresh.Enabled = $true
-  Load-Drives; $junk.Status.Text = $msg    # refresh free space on each drive
-})
+. (Join-Path $PSScriptRoot "modules\JunkTargets.ps1")   # shared cleaning engine
+# The Cleanup page (modules\Cleanup.ps1) replaced the Junk Files tab in 4.3
 
 # ================================================================ 2. REGISTRY
 $HKLM = "HKEY_LOCAL_MACHINE"; $HKCU = "HKEY_CURRENT_USER"
@@ -897,7 +779,7 @@ function Check-Update([bool]$manual) {
 }
 
 $upd = @{}
-$upd.Page   = New-Object Windows.Forms.TabPage -Property @{Text="Updates"}
+$upd.Page   = New-Object Windows.Forms.TabPage -Property @{Text="Updates & settings"}
 $upd.Title  = New-Object Windows.Forms.Label -Property @{AutoSize=$true; Margin='0,0,0,10'; Text="CleanSweep $Version"; Font=New-Object Drawing.Font("Segoe UI",16,[Drawing.FontStyle]::Bold)}
 $upd.Status = New-Object Windows.Forms.Label -Property @{AutoSize=$true; Margin='0,0,0,4'; Text="Updates have not been checked yet."}
 $upd.Last   = New-Object Windows.Forms.Label -Property @{AutoSize=$true; Margin='0,0,0,12'; ForeColor='DimGray'}
@@ -907,7 +789,12 @@ $upd.Check  = New-Object Windows.Forms.Button -Property @{AutoSize=$true; Minimu
 $upd.Auto.Add_CheckedChanged({ $settings.AutoCheck = $upd.Auto.Checked; Save-Settings })
 $upd.Check.Add_Click({ Check-Update $true })
 $updFlow = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Fill'; FlowDirection='TopDown'; WrapContents=$false; Padding='20,20,20,20'; AutoScroll=$true}
-$updFlow.Controls.AddRange(@($upd.Title, $upd.Status, $upd.Last, $upd.Auto, $upd.Check))
+$upd.AdvT  = New-Object Windows.Forms.Label -Property @{AutoSize=$true; Margin='0,28,0,6'; Text="Advanced tools"; Font=New-Object Drawing.Font("Segoe UI",11,[Drawing.FontStyle]::Bold)}
+$upd.Adv   = New-Object Windows.Forms.CheckBox -Property @{AutoSize=$true; Margin='0,0,0,4'; Text="Show the Registry cleaner"; Checked=[bool]$settings.ShowAdvanced}
+$upd.AdvN  = New-Object Windows.Forms.Label -Property @{AutoSize=$true; MaximumSize='640,0'; Margin='20,0,0,0'; ForeColor='DimGray'
+  Text="Off by default. Cleaning the registry doesn't make Windows faster and is the riskiest kind of cleaning; CleanSweep's cleaner is conservative and keeps backups. Takes effect the next time CleanSweep opens."}
+$upd.Adv.Add_CheckedChanged({ $settings.ShowAdvanced = $upd.Adv.Checked; Save-Settings })
+$updFlow.Controls.AddRange(@($upd.Title, $upd.Status, $upd.Last, $upd.Auto, $upd.Check, $upd.AdvT, $upd.Adv, $upd.AdvN))
 $upd.Page.Controls.Add($updFlow)
 $tabs.TabPages.Add($upd.Page)
 
@@ -923,11 +810,19 @@ $form.Add_Shown({
 . (Join-Path $PSScriptRoot "modules\Dashboard.ps1")
 . (Join-Path $PSScriptRoot "modules\Repair.ps1")
 . (Join-Path $PSScriptRoot "modules\Drives.ps1")
-. (Join-Path $PSScriptRoot "modules\TempFiles.ps1")
+. (Join-Path $PSScriptRoot "modules\Cleanup.ps1")
 . (Join-Path $PSScriptRoot "modules\Schedule.ps1")
 
+# Page order. The registry cleaner is an advanced tool: hidden unless turned on in Updates & settings,
+# because registry cleaning has no real speed benefit and is the riskiest kind of cleaning.
+$order = @($dash.Page, $tcl.Page, $drv.Page, $rep.Page, $sc.Page, $wifi.Page)
+if ($settings.ShowAdvanced -or $TestMode) { $order += $reg.Page }
+$order += $upd.Page
+$tabs.TabPages.Clear(); foreach ($p in $order) { $tabs.TabPages.Add($p) }
+$tabs.SelectedIndex = 0
+
 # Windows 11 style dark shell: sidebar, dark controls, accent buttons
-foreach ($b in @($junk.Scan, $tcl.Scan, $reg.Scan, $sc.Scan, $wifi.Scan, $rep.Rec, $upd.Check)) { if ($b) { Set-Primary $b } }
+foreach ($b in @($tcl.Scan, $reg.Scan, $sc.Scan, $wifi.Scan, $rep.Rec, $upd.Check)) { if ($b) { Set-Primary $b } }
 Initialize-Shell
 
 if (-not $TestMode) { [void]$form.ShowDialog() }

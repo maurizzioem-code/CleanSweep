@@ -1,7 +1,7 @@
 # CleanSweep automatic cleanup - started by Windows Task Scheduler (or "Run now" on the Dashboard).
 # Runs without a window and only removes the junk categories chosen in the Dashboard schedule settings.
-# Safety rules: never touches files changed in the last 24 hours, only empties Recycle Bin items older
-# than the chosen age, skips files that are in use, and never changes settings, services or the registry.
+# Uses the same cleaning engine and safety rules as the Cleanup page (modules\JunkTargets.ps1): files changed in the
+# last 24 hours, ignored files and files in use are skipped; links are never followed; only old Recycle Bin items go.
 param([string]$Trigger = "Scheduled")
 $ErrorActionPreference = "SilentlyContinue"
 $AppDir = Join-Path $env:LOCALAPPDATA "CleanSweep"
@@ -29,35 +29,20 @@ try {
 
   foreach ($name in $cats) {
     if (-not $targets.Contains($name)) { continue }
-    $f0 = $freed
-    foreach ($f in (Get-Items $targets[$name])) {
-      if ($f.LastWriteTime -gt $cut -or $f.CreationTime -gt $cut) { $skipped++; continue }   # may still be in use
+    $f0 = $freed; $stat = New-CleanStat
+    foreach ($f in (Get-CleanFiles $targets[$name] $cut $stat)) {
       $len = $f.Length
-      try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $freed += $len; $files++ } catch { $skipped++ }
+      if (Remove-CleanFile $f.FullName) { $skipped++ } else { $freed += $len; $files++ }
     }
-    # Remove empty folders left behind in temp locations (not the root folders themselves)
-    if ($name -match 'Temp') {
-      foreach ($root in $targets[$name]) {
-        Get-ChildItem -LiteralPath $root -Directory -Recurse -Force -ErrorAction Ignore | Sort-Object { $_.FullName.Length } -Descending |
-          Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $_.LastWriteTime -lt $cut -and -not (Get-ChildItem -LiteralPath $_.FullName -Force -ErrorAction Ignore | Select-Object -First 1) } |
-          ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Ignore }
-      }
-    }
+    $skipped += $stat.Recent
+    if ($name -match 'Temp') { foreach ($root in $targets[$name]) { Remove-EmptyDirs $root $cut } }
     $parts += "$name $(Fmt ($freed - $f0))"
   }
 
-  # Recycle Bin: only items deleted more than N days ago (each deleted item has a $I info file and a $R data item)
+  # Recycle Bin: only items deleted more than N days ago
   if ($recycleDays -gt 0) {
-    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $old = (Get-Date).AddDays(-$recycleDays); $f0 = $freed
-    foreach ($d in (Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3")) {
-      $bin = "$($d.DeviceID)\`$Recycle.Bin\$sid"
-      foreach ($i in (Get-ChildItem -LiteralPath $bin -Force -Filter '$I*' -ErrorAction Ignore)) {
-        if ($i.LastWriteTime -gt $old) { continue }
-        $r = Join-Path $bin ('$R' + $i.Name.Substring(2))
-        $len = 0; if (Test-Path -LiteralPath $r) { $len = (Get-ChildItem -LiteralPath $r -Recurse -Force -File -ErrorAction Ignore | Measure-Object Length -Sum).Sum; if (-not $len) { $len = (Get-Item -LiteralPath $r -Force).Length } }
-        try { if (Test-Path -LiteralPath $r) { Remove-Item -LiteralPath $r -Recurse -Force -ErrorAction Stop }; Remove-Item -LiteralPath $i.FullName -Force -ErrorAction Stop; $freed += [long]$len; $files++ } catch { $skipped++ }
-      }
-    }
+    $f0 = $freed
+    foreach ($it in (Get-OldRecycleItems $recycleDays)) { if (Remove-RecycleItem $it) { $skipped++ } else { $freed += [long]$it.Length; $files++ } }
     $parts += "Recycle Bin $(Fmt ($freed - $f0))"
   }
 

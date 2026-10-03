@@ -2,7 +2,7 @@ name: Build and test on Windows
 on:
   workflow_dispatch:
   push:
-    paths: ["app/**", "launcher/**", "tests/**", ".github/workflows/**"]
+    paths: ["app/**", "launcher/**", "tests/**", ".github/workflows/test.yml"]
 jobs:
   windows:
     runs-on: windows-latest

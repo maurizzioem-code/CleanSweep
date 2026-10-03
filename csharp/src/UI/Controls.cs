@@ -144,9 +144,9 @@ namespace CleanSweep.UI
     /// <summary>Small factory helpers so pages read like a layout description.</summary>
     public static class Ui
     {
-        public static Label Title(string text) => new Label
+        public static Label Title(string text, float size = 14) => new Label
         {
-            Dock = DockStyle.Top, Height = 40, TextAlign = ContentAlignment.MiddleLeft, Text = text, Font = Theme.Title,
+            Dock = DockStyle.Top, Height = 40, TextAlign = ContentAlignment.MiddleLeft, Text = text, Font = size == 14 ? Theme.Title : Theme.DisplayFont(size),
             ForeColor = Theme.Text, AutoEllipsis = true, UseMnemonic = false
         };
         public static Label Text(string text, bool sub = false) => new Label

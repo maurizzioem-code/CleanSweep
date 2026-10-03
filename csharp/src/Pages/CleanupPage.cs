@@ -22,7 +22,7 @@ namespace CleanSweep.Pages
         public static readonly (string Key, string Text)[] Modes = { ("Ask", "List it so I can decide"), ("Skip", "Skip it"), ("Restart", "Delete it when the PC restarts") };
         static readonly int[] RecycleDays = { 7, 14, 30, 60, 90 };
 
-        public readonly Label Status = Ui.Title("Click Scan to find junk and temporary files.");
+        public readonly Label Status = Ui.Title("Click Scan to find junk and temporary files.", 12.5f);
         public readonly ComboBox Age = Ui.Combo(90, Ages.Select(a => a.Name).ToArray());
         public readonly ComboBox Recycle = Ui.Combo(90, RecycleDays.Select(d => d + " days").ToArray());
         public readonly ComboBox Mode = Ui.Combo(230, Modes.Select(m => m.Text).ToArray());
@@ -143,7 +143,7 @@ namespace CleanSweep.Pages
                     i.SubItems[1].Text = Fmt.Count(t.Found.Count); i.SubItems[2].Text = Fmt.Size(t.Size);
                     string sk = stat.Describe(); i.SubItems[3].Text = sk.Length > 0 ? sk : t.Note;
                 }
-                Status.Text = $"Found {Fmt.Size(total)} in {Fmt.Count(count)} files older than {Age.SelectedItem}.";
+                Status.Text = $"Found {Fmt.Size(total)} in {Fmt.Files(count)} older than {Age.SelectedItem}.";
                 SetBusy(false); Clean.Enabled = count > 0;
             }
             catch (OperationCanceledException) { SetBusy(false); Status.Text = "Scan cancelled."; }
@@ -160,7 +160,7 @@ namespace CleanSweep.Pages
             var sel = Rows.Where(i => i.Checked && Target(i).Found.Count > 0).ToList();
             if (sel.Count == 0) return;
             int n = sel.Sum(i => Target(i).Found.Count);
-            if (!Msg.Confirm($"Delete {Fmt.Count(n)} files from: {string.Join(", ", sel.Select(i => i.Text))}?")) return;
+            if (!Msg.Confirm($"Delete {Fmt.Files(n)} from: {string.Join(", ", sel.Select(i => i.Text))}?")) return;
 
             string mode = ModeKey; DateTime cut = DateTime.Now.AddDays(-AgeDays);
             cts = new CancellationTokenSource(); var ct = cts.Token;
@@ -196,7 +196,7 @@ namespace CleanSweep.Pages
             Problems.BeginUpdate(); foreach (var f in failures) AddProblem(f.Item, f.Reason, f.Who); Problems.EndUpdate();
             Progress.Value = 0; SetBusy(false); UpdateProblemHeader();
 
-            string msg = cancelled ? $"Cleaning stopped. Freed {Fmt.Size(freed)} before cancelling." : $"Freed {Fmt.Size(freed)} ({Fmt.Count(done)} files).";
+            string msg = cancelled ? $"Cleaning stopped. Freed {Fmt.Size(freed)} before cancelling." : $"Freed {Fmt.Size(freed)} ({Fmt.Files(done)}).";
             if (failed > 0)
             {
                 if (mode == "Skip") msg += $" Skipped {failed} that could not be deleted.";

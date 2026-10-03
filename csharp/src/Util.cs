@@ -25,6 +25,7 @@ namespace CleanSweep
             return (b / 1024.0).ToString("N0") + " KB";
         }
         public static string Count(long n) => n.ToString("N0");
+        public static string Files(long n) => n == 1 ? "1 file" : n.ToString("N0") + " files";
     }
 
     /// <summary>All message boxes go through here so the self-test can answer them and record what was asked.</summary>

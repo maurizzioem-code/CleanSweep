@@ -161,7 +161,7 @@ namespace CleanSweep
                 Check(broken.Count == 0, "core checks failed: " + string.Join("; ", broken.Select(b => b.Area + " " + b.Text)));
                 Check(dash.SaveReport.Enabled && dash.Run.Enabled, "buttons not re-enabled");
             });
-            Shot("dashboard");
+            dash.ScrollToTop(); Pump(100); Shot("dashboard");
             await Step("Dashboard: history saved and shown", () =>
             {
                 var h = Health.LoadHistory(); Note($"    {h.Count} entries (was {histBefore})  trend: {dash.Trend.Text}");
@@ -205,12 +205,8 @@ namespace CleanSweep
                 Check(dash.Tiles["clean"].Available && dash.Tiles["restore"].Available, "Quick clean / Restore point should work");
                 Check(!dash.Tiles["repair"].Available, "Repair tile should wait for its page");
                 int m = Msg.Log.Count; await dash.QuickAction("repair"); Check(Msg.Log.Count == m + 1, "unavailable tile gave no message");
-                await dash.QuickAction("clean"); Note("    Quick clean: " + form.Page<CleanupPage>().Status.Text);
-                Check(form.Current is CleanupPage, "Quick clean should show the Cleanup page");
-                form.ShowPage(dash);
                 await dash.QuickAction("restore"); Note("    Restore point: " + dash.Tiles["restore"].Sub);
             });
-            Shot("dashboard-after-actions");
 
             // ---------------------------------------------------------------- settings
             await Step("Settings: shared file keeps other keys", () =>
@@ -382,9 +378,16 @@ namespace CleanSweep
             cl.SetIgnore(new string[0]); cl.TickDefaults();
             try { RemoveJunction(Path.Combine(d, "link")); Directory.Delete(d, true); Directory.Delete(outside2, true); } catch { }
 
+            await Step("Dashboard: Quick clean tile", async () =>
+            {
+                form.ShowPage(dash); Pump(100);
+                await dash.QuickAction("clean"); Note("    Quick clean: " + cl.Status.Text);
+                Check(form.Current is CleanupPage, "Quick clean should show the Cleanup page");
+                Check(!cl.Busy && cl.Status.Text.Length > 0, "Quick clean did not finish");
+            });
             await Step("Messages asked during the test", () => { foreach (var m in Msg.Log) Note("  " + m); foreach (var o in Shell.TestOpened) Note("  [would open] " + o); });
             form.ShowPage(cl); Shot("cleanup-final");
-            form.ShowPage(dash); Pump(300); Shot("dashboard-final");
+            form.ShowPage(dash); Pump(300); Shot("dashboard-final"); form.Size = new Size(960, 640); Pump(300); dash.ScrollToTop(); Shot("dashboard-960"); form.Size = new Size(1024, 720);
         }
 
         // ---------------------------------------------------------------- helpers

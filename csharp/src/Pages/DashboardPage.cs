@@ -91,7 +91,9 @@ namespace CleanSweep.Pages
             AddHw("bat", UI.Glyph.Battery, "Battery and temperatures", "#9FE6A0", 100, 2, 1);
 
             // ---- recommendations
-            List.AddColumns(("Status", 90), ("Area", 130), ("Finding", 440), ("Suggested action", 190));
+            List.AddColumns(("Status", 84), ("Area", 116), ("Finding", 440), ("Suggested action", 180));
+            // Finding column takes the spare width so there is no sideways scrolling
+            List.ClientSizeChanged += (s, e) => { int w = List.ClientSize.Width - 84 - 116 - 180 - 2; if (w > 120 && List.Columns.Count == 4) List.Columns[2].Width = w; };
             var rec = new Card { Dock = DockStyle.Top, Height = 340, Padding = new Padding(4, 4, 4, 10), Margin = new Padding(0) };
             var recBottom = new Panel { Dock = DockStyle.Bottom, Height = 50, Padding = new Padding(12, 6, 12, 0) };
             Advice = L("Select a finding to see what to do.", Theme.UiFont(9.5f), Theme.Sub, 0, DockStyle.Fill); Advice.AutoEllipsis = false;
@@ -326,9 +328,9 @@ namespace CleanSweep.Pages
             if (d.NetDown != null)
             {
                 var c = Hw["net"]; double down = d.NetDown.Value * 8 / (1 << 20), up = (d.NetUp ?? 0) * 8 / (1 << 20);
-                c.Value = $"{down:N1} Mbps"; c.Sub = $"Download {down:N1} Mbps{dot}Upload {up:N1} Mbps\nLive traffic on all adapters"; c.Push(down);
+                c.Value = $"{down:N1} Mbps"; c.Sub = $"Upload {up:N1} Mbps\nAll network adapters"; c.Push(down);
             }
-            string tempTxt = temps != null && temps.Count > 0 ? string.Join(dot, temps.Take(3)) : "Temperatures: not reported by this PC";
+            string tempTxt = temps != null && temps.Count > 0 ? string.Join(dot, temps.Take(3)) : "No temperature sensors reported";
             var b = Hw["bat"];
             if (d.Battery != null)
             {
@@ -344,7 +346,13 @@ namespace CleanSweep.Pages
             }
         }
 
-        public override void OnShown() { UpdateTileAvailability(); }
+        public override void OnShown()
+        {
+            UpdateTileAvailability();
+            // Windows scrolls a panel to whichever control has focus; start at the top with the Run button focused
+            Run.Focus(); ScrollToTop();
+            if (IsHandleCreated) BeginInvoke(new Action(ScrollToTop));
+        }
         public void ScrollTo(Control c) => scroll.ScrollControlIntoView(c);
         public void ScrollToTop() => scroll.AutoScrollPosition = new Point(0, 0);
         public Control RecommendationsCard => List.Parent;

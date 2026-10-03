@@ -280,8 +280,13 @@ namespace CleanSweep
             });
             await Step("Cleanup: clean recommended", async () =>
             {
+                // plant an old junk file so there is always something to clean (e.g. when the test runs twice)
+                string junk = Path.Combine(CleanEngine.MyTemp, "CleanSweepSelfTest-old.tmp");
+                File.WriteAllText(junk, new string('x', 4096)); var old = DateTime.Now.AddDays(-120);
+                File.SetCreationTime(junk, old); File.SetLastWriteTime(junk, old); File.SetLastAccessTime(junk, old);
                 cl.TickDefaults(); await cl.ScanAsync(); await cl.CleanAsync();
                 Note("    " + cl.Status.Text); Note("    could not delete: " + cl.Problems.Items.Count);
+                Check(!File.Exists(junk), "old test junk file was not cleaned");
                 foreach (ListViewItem it in cl.Problems.Items.Cast<ListViewItem>().Take(5)) Note($"      {it.Text} | {it.SubItems[2].Text} | {it.SubItems[3].Text}");
                 Check(cl.Status.Text.StartsWith("Freed"), "clean did not finish");
             });

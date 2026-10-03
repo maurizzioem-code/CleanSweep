@@ -49,26 +49,26 @@ $tcl.Status = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=36; 
 $tcl.Opts   = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Top'; AutoSize=$true; AutoSizeMode='GrowAndShrink'; WrapContents=$true; Padding='0,0,0,6'}
 $oL = @{AutoSize=$true; Margin='0,7,6,0'}
 $tcl.AgeL   = New-Object Windows.Forms.Label -Property ($oL + @{Text="Delete files older than"})
-$tcl.Age    = New-Object Windows.Forms.ComboBox -Property @{DropDownStyle='DropDownList'; Width=110; Margin='0,3,18,0'}
+$tcl.Age    = New-Object Windows.Forms.ComboBox -Property @{DropDownStyle='DropDownList'; Width=90; Margin='0,3,18,0'}
 $TempAges = [ordered]@{ "1 hour" = 1/24; "1 day" = 1; "7 days" = 7; "30 days" = 30 }
 foreach ($k in $TempAges.Keys) { [void]$tcl.Age.Items.Add($k) }
 $tcl.ModeL  = New-Object Windows.Forms.Label -Property ($oL + @{Text="If a file can't be deleted"})
-$tcl.Mode   = New-Object Windows.Forms.ComboBox -Property @{DropDownStyle='DropDownList'; Width=260; Margin='0,3,18,0'}
+$tcl.Mode   = New-Object Windows.Forms.ComboBox -Property @{DropDownStyle='DropDownList'; Width=230; Margin='0,3,0,0'}
 $TempModes = [ordered]@{ Ask = "List it so I can decide"; Skip = "Skip it"; Restart = "Delete it when the PC restarts" }
 foreach ($v in $TempModes.Values) { [void]$tcl.Mode.Items.Add($v) }
-$tcl.IgnBtn = New-Object Windows.Forms.Button -Property @{AutoSize=$true; MinimumSize='130,32'; Margin='0,0,0,0'; Text="Ignore list"}
-$tcl.Opts.Controls.AddRange(@($tcl.AgeL, $tcl.Age, $tcl.ModeL, $tcl.Mode, $tcl.IgnBtn))
+$tcl.IgnBtn = New-Object Windows.Forms.Button -Property @{AutoSize=$true; MinimumSize='110,36'; Margin='0,0,8,6'; Text="Ignore list"}
+$tcl.Opts.Controls.AddRange(@($tcl.AgeL, $tcl.Age, $tcl.ModeL, $tcl.Mode))
 
-$tcl.List = New-Object Windows.Forms.ListView -Property @{View='Details'; CheckBoxes=$true; FullRowSelect=$true; Dock='Top'; Height=170; HideSelection=$false}
+$tcl.List = New-Object Windows.Forms.ListView -Property @{View='Details'; CheckBoxes=$true; FullRowSelect=$true; Dock='Top'; Height=150; HideSelection=$false}
 foreach ($c in @(@("Location",210), @("Files",80), @("Size",90), @("Skipped",160), @("Folder",380))) { [void]$tcl.List.Columns.Add($c[0], $c[1]) }
 $bp = @{AutoSize=$true; MinimumSize='110,36'; Margin='0,0,8,6'}
 $tcl.Bar   = New-Object Windows.Forms.FlowLayoutPanel -Property @{Dock='Top'; AutoSize=$true; AutoSizeMode='GrowAndShrink'; WrapContents=$true; Padding='0,8,0,0'}
 $tcl.Scan  = New-Object Windows.Forms.Button -Property ($bp + @{Text="Scan"})
 $tcl.Clean = New-Object Windows.Forms.Button -Property ($bp + @{Text="Clean"; Enabled=$false})
 $tcl.Stop  = New-Object Windows.Forms.Button -Property ($bp + @{Text="Cancel"; Enabled=$false})
-$tcl.Bar.Controls.AddRange(@($tcl.Scan, $tcl.Clean, $tcl.Stop))
+$tcl.Bar.Controls.AddRange(@($tcl.Scan, $tcl.Clean, $tcl.Stop, $tcl.IgnBtn))
 $tcl.Prog  = New-Object CSProgress -Property @{Dock='Top'; Height=10; Minimum=0; Maximum=100}
-$tcl.PHdr  = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=44; TextAlign='BottomLeft'; Font=New-Object Drawing.Font("Segoe UI",10,[Drawing.FontStyle]::Bold)
+$tcl.PHdr  = New-Object Windows.Forms.Label -Property @{Dock='Fill'; TextAlign='BottomLeft'; Font=New-Object Drawing.Font("Segoe UI",10,[Drawing.FontStyle]::Bold)
   Text="Files that could not be deleted"}
 $tcl.PHelp = New-Object Windows.Forms.Label -Property @{Dock='Top'; Height=22; ForeColor='DimGray'; AutoEllipsis=$true
   Text="Nothing is forced. Close the app shown under ""Used by"" and click Retry, or choose another action for the ticked files."}
@@ -80,10 +80,12 @@ $tcl.Reboot = New-Object Windows.Forms.Button -Property ($bp + @{Text="Delete at
 $tcl.Skip   = New-Object Windows.Forms.Button -Property ($bp + @{Text="Ignore this time"})
 $tcl.Always = New-Object Windows.Forms.Button -Property ($bp + @{Text="Always ignore  " + [char]0x25BE})
 $tcl.Open   = New-Object Windows.Forms.Button -Property ($bp + @{Text="Open location"})
-$tcl.PAll   = New-Object Windows.Forms.Button -Property ($bp + @{Text="Tick all"})
-$tcl.PBar.Controls.AddRange(@($tcl.Retry, $tcl.Reboot, $tcl.Skip, $tcl.Always, $tcl.Open, $tcl.PAll))
+$tcl.PAll   = New-Object Windows.Forms.Button -Property @{Text="Tick all"; Dock='Right'; AutoSize=$true; MinimumSize='90,30'}
+$tcl.PTop   = New-Object Windows.Forms.Panel -Property @{Dock='Top'; Height=40; Padding='0,6,0,2'}
+$tcl.PTop.Controls.Add($tcl.PHdr); $tcl.PTop.Controls.Add($tcl.PAll)
+$tcl.PBar.Controls.AddRange(@($tcl.Retry, $tcl.Reboot, $tcl.Skip, $tcl.Always, $tcl.Open))
 # Dock order: the last added docks first
-foreach ($c in @($tcl.Probs, $tcl.PBar, $tcl.PHelp, $tcl.PHdr, $tcl.Prog, $tcl.Bar, $tcl.List, $tcl.Opts, $tcl.Status)) { $tcl.Page.Controls.Add($c) }
+foreach ($c in @($tcl.Probs, $tcl.PBar, $tcl.PHelp, $tcl.PTop, $tcl.Prog, $tcl.Bar, $tcl.List, $tcl.Opts, $tcl.Status)) { $tcl.Page.Controls.Add($c) }
 
 # "Always ignore" choices
 $tcl.Menu = New-Object Windows.Forms.ContextMenuStrip -Property @{ShowImageMargin=$false; BackColor=$Theme.Card; ForeColor=$Theme.Text; RenderMode='System'}
@@ -115,7 +117,7 @@ function Get-TempLocations {
   )
   $mine = [Environment]::GetFolderPath('UserProfile')
   $otherT = @(Get-ChildItem -LiteralPath (Split-Path $mine) -Directory -Force -ErrorAction Ignore |
-    Where-Object { $_.FullName -ne $mine -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
+    Where-Object { $_.FullName -ne $mine -and $_.Name -notin 'Default','Default User','Public','All Users' -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
     ForEach-Object { Join-Path $_.FullName "AppData\Local\Temp" } | Where-Object { (Test-Path -LiteralPath $_) -and $_ -ne $me })
   if ($otherT) { $rows += @{ Name = "Other users' temp folders"; Paths = $otherT; On = $true } }
   $rows += @{ Name = "Internet temporary files"; Paths = @("$env:LOCALAPPDATA\Microsoft\Windows\INetCache"); On = $true }

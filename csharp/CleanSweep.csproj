@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- CleanSweep (C# edition). Targets .NET Framework 4.8, which is built into Windows 10/11,
+       so the exe is small and needs nothing installed. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>CleanSweep</AssemblyName>
+    <RootNamespace>CleanSweep</RootNamespace>
+    <ApplicationIcon>CleanSweep.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>5.0.0</Version>
+    <Product>CleanSweep</Product>
+    <Description>CleanSweep - PC Health, Cleanup and Repair</Description>
+    <Copyright>CleanSweep</Copyright>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <DebugType>embedded</DebugType>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="Microsoft.VisualBasic" />
+    <Reference Include="System.Management" />
+    <EmbeddedResource Include="CleanSweep.ico" LogicalName="CleanSweep.ico" />
+  </ItemGroup>
+</Project>

@@ -1,3 +1,5 @@
 build/
 dist/
 test-output/
+csharp/bin/
+csharp/obj/

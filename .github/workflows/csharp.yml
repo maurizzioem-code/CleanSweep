@@ -1,0 +1,34 @@
+name: C# edition - build and self-test on Windows
+on:
+  workflow_dispatch:
+  push:
+    paths: ["csharp/**", ".github/workflows/csharp.yml"]
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build CleanSweep (C#)
+        shell: powershell
+        run: |
+          dotnet --version
+          dotnet build csharp\CleanSweep.csproj -c Release -nologo
+          if ($LASTEXITCODE) { exit 1 }
+          Get-Item csharp\bin\Release\CleanSweep.exe | Format-List Name, Length, LastWriteTime
+      - name: Self-test (drives the real window)
+        timeout-minutes: 10
+        shell: powershell
+        run: |
+          $o = Join-Path $PWD "test-output"; New-Item -ItemType Directory $o -Force | Out-Null
+          $p = Start-Process csharp\bin\Release\CleanSweep.exe -ArgumentList "--selftest", "`"$o`"" -PassThru -Wait
+          Get-Content "$o\log.txt"
+          "exit code (failed steps): $($p.ExitCode)"
+          if (Test-Path "$env:LOCALAPPDATA\CleanSweep\logs\app.log") { Copy-Item "$env:LOCALAPPDATA\CleanSweep\logs\app.log" $o }
+          if ($p.ExitCode -ne 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: csharp-test-output, path: test-output }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: CleanSweep-csharp-exe, path: csharp/bin/Release/CleanSweep.exe }

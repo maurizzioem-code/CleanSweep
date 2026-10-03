@@ -344,6 +344,82 @@ Step "Schedule: turn off removes the task" {
   if ($ac.Status.Text -notmatch '^Off') { throw "card should say Off" }
 }
 
+# ---------------------------------------------------------------- temp file cleaner
+Step "Temp: page lists temp locations" {
+  $tabs.SelectedTab = $tcl.Page; [Windows.Forms.Application]::DoEvents()
+  foreach ($i in $tcl.List.Items) { Note "    [$(if ($i.Checked) { 'x' } else { ' ' })] $($i.Text): $($i.Tag.Paths -join '; ')" }
+  $names = @($tcl.List.Items | ForEach-Object Text)
+  if ($names -notcontains "Your temp folder" -or $names -notcontains "Windows temp folder") { throw "temp locations missing" }
+}
+Step "Temp: clean, and list files that can't be deleted" {
+  $d = Join-Path ((Get-Item $env:TEMP).FullName) "CleanSweepTempTest"; if (Test-Path "$d\link") { cmd /c rmdir "$d\link" | Out-Null }
+  Remove-Item -Recurse -Force $d -ErrorAction Ignore; New-Item -ItemType Directory $d | Out-Null
+  $outside = Join-Path $env:PUBLIC "CleanSweepOutside"; New-Item -ItemType Directory $outside -Force | Out-Null
+  $old = (Get-Date).AddDays(-3)
+  Set-Content "$outside\keep.txt" 'x'; (Get-Item "$outside\keep.txt").LastWriteTime = $old
+  cmd /c mklink /J "$d\link" "$outside" | Out-Null
+  foreach ($n in 'old.txt','readonly.txt','locked.txt','keep.log','sub\nested.txt') { $p = Join-Path $d $n; New-Item -ItemType Directory (Split-Path $p) -Force | Out-Null; Set-Content $p 'x'; (Get-Item $p).LastWriteTime = $old }
+  Set-Content "$d\new.txt" 'x'
+  (Get-Item "$d\readonly.txt").IsReadOnly = $true
+  $script:TT = @{ Dir = $d; Outside = $outside; Lock = [IO.File]::Open("$d\locked.txt", 'Open', 'Read', 'None') }
+  Set-TempIgnore @("file:$d\keep.log")
+  $tcl.Age.SelectedItem = "1 day"; $tcl.Mode.SelectedIndex = 0
+  foreach ($i in $tcl.List.Items) { $i.Checked = ($i.Text -eq "Your temp folder") }
+  Invoke-TempScan; Note "    scan: $($tcl.Status.Text) | $($tcl.List.Items[0].SubItems[3].Text)"
+  Invoke-TempClean; Note "    clean: $($tcl.Status.Text)"
+  foreach ($it in $tcl.Probs.Items) { Note "    can't delete: $($it.Text) | $($it.SubItems[2].Text) | used by: $($it.SubItems[3].Text)" }
+  $bad = @()
+  if (Test-Path "$d\old.txt") { $bad += "old file not deleted" }
+  if (Test-Path "$d\readonly.txt") { $bad += "read-only file not deleted" }
+  if (Test-Path "$d\sub\nested.txt") { $bad += "nested file not deleted" }
+  if (-not (Test-Path "$d\new.txt")) { $bad += "recent file was deleted" }
+  if (-not (Test-Path "$d\keep.log")) { $bad += "ignored file was deleted" }
+  if (-not (Test-Path "$outside\keep.txt")) { $bad += "SAFETY: file behind a junction was deleted" }
+  if (-not (Test-Path "$d\locked.txt")) { $bad += "locked file vanished" }
+  $row = @($tcl.Probs.Items | Where-Object { $_.Text -eq 'locked.txt' })
+  if (-not $row) { $bad += "locked file not listed" } elseif ($row[0].SubItems[2].Text -ne 'In use' -or $row[0].SubItems[3].Text -notmatch 'PID') { $bad += "reason/app not shown" }
+  if ($bad) { throw ($bad -join '; ') }
+}
+Shot "temp-files"
+Step "Temp: Always ignore + ignore list" {
+  foreach ($it in $tcl.Probs.Items) { $it.Checked = ($it.Text -eq 'locked.txt') }
+  Add-TempIgnore 'file'; Note "    $($tcl.Status.Text)"; Note "    rules: $((Get-TempIgnore) -join ' | ')"
+  if ($tcl.Probs.Items.Count) { throw "ignored file still listed" }
+  if (-not (Test-CSIgnored "$($script:TT.Dir)\locked.txt")) { throw "rule not applied" }
+  Show-IgnoreList; $u = $script:IgnUI; $u.Form.TopMost = $true
+  Shot-Window $u.Form "temp-ignore-list"
+  $u.List.SelectedIndex = [array]::IndexOf(@($u.Rules), "file:$($script:TT.Dir)\locked.txt"); Remove-IgnoreSelected; $u.Form.Close()
+  if (Test-CSIgnored "$($script:TT.Dir)\locked.txt") { throw "rule not removed" }
+  Note "    after removing: $((Get-TempIgnore) -join ' | ')"
+}
+Step "Temp: Retry after the app lets go" {
+  Invoke-TempScan; Invoke-TempClean
+  if (-not @($tcl.Probs.Items | Where-Object Text -eq 'locked.txt')) { throw "locked file not listed again" }
+  $script:TT.Lock.Close()
+  foreach ($it in $tcl.Probs.Items) { $it.Checked = $true }
+  Invoke-TempRetry; Note "    $($tcl.Status.Text)"
+  if (Test-Path "$($script:TT.Dir)\locked.txt") { throw "retry did not delete the file" }
+}
+Step "Temp: Delete at next restart" {
+  $p = "$($script:TT.Dir)\locked2.txt"; Set-Content $p 'x'; (Get-Item $p).LastWriteTime = (Get-Date).AddDays(-3)
+  $lk = [IO.File]::Open($p, 'Open', 'Read', 'None')
+  Invoke-TempScan; Invoke-TempClean
+  foreach ($it in $tcl.Probs.Items) { $it.Checked = ($it.Text -eq 'locked2.txt') }
+  Invoke-TempAtRestart; Note "    $($tcl.Status.Text)"
+  $pend = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction Ignore).PendingFileRenameOperations
+  $lk.Close()
+  if (-not ($pend | Where-Object { $_ -like "*locked2.txt" })) { throw "not scheduled for deletion at restart" }
+  Note "    pending at restart: $(@($pend | Where-Object { $_ -like '*CleanSweep*' }) -join ' | ')"
+}
+Step "Temp: 'Skip it' mode" {
+  $p = "$($script:TT.Dir)\locked3.txt"; Set-Content $p 'x'; (Get-Item $p).LastWriteTime = (Get-Date).AddDays(-3)
+  $lk = [IO.File]::Open($p, 'Open', 'Read', 'None'); $tcl.Mode.SelectedIndex = 1
+  Invoke-TempScan; Invoke-TempClean; Note "    $($tcl.Status.Text)"; $lk.Close(); $tcl.Mode.SelectedIndex = 0
+  if ($tcl.Probs.Items.Count) { throw "skip mode should not list files" }
+}
+if ($script:TT) { cmd /c rmdir "$($script:TT.Dir)\link" | Out-Null; Remove-Item -Recurse -Force $script:TT.Dir, $script:TT.Outside -ErrorAction Ignore }
+Set-TempIgnore @()
+
 Step "Updates: check" { Check-Update $false; Note "    $($upd.Status.Text)" }
 Shot "updates"
 

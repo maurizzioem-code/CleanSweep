@@ -20,7 +20,7 @@ try {
   . (Join-Path $PSScriptRoot "modules\JunkTargets.ps1")
 
   $cfg = $null
-  try { $cfg = (Get-Content -Raw $settingsFile | ConvertFrom-Json).AutoClean } catch {}
+  try { $all = Get-Content -Raw $settingsFile | ConvertFrom-Json; $cfg = $all.AutoClean; $global:CSIgnore = @($all.TempIgnore | Where-Object { $_ }) } catch {}
   if (-not $cfg) { Log "No schedule settings found - nothing to do."; exit 0 }
   $cats = @($cfg.Cats); $recycleDays = [int]$cfg.RecycleDays
   $sw = [Diagnostics.Stopwatch]::StartNew(); $cut = (Get-Date).AddDays(-1)

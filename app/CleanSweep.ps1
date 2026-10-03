@@ -1,7 +1,7 @@
 # CleanSweep - a simple disk, registry and shortcut cleaner for Windows 11
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, Microsoft.VisualBasic
 [System.Windows.Forms.Application]::EnableVisualStyles()
-$Version = "4.1"
+$Version = "4.2"
 $TestMode = ($env:CLEANSWEEP_TEST -eq "1")   # automated tests: message boxes answer themselves, nothing waits for a click
 # All message boxes go through CSMsg so automated tests can answer them
 if (-not ("CSMsg" -as [type])) {
@@ -923,10 +923,11 @@ $form.Add_Shown({
 . (Join-Path $PSScriptRoot "modules\Dashboard.ps1")
 . (Join-Path $PSScriptRoot "modules\Repair.ps1")
 . (Join-Path $PSScriptRoot "modules\Drives.ps1")
+. (Join-Path $PSScriptRoot "modules\TempFiles.ps1")
 . (Join-Path $PSScriptRoot "modules\Schedule.ps1")
 
 # Windows 11 style dark shell: sidebar, dark controls, accent buttons
-foreach ($b in @($junk.Scan, $reg.Scan, $sc.Scan, $wifi.Scan, $rep.Rec, $upd.Check)) { if ($b) { Set-Primary $b } }
+foreach ($b in @($junk.Scan, $tcl.Scan, $reg.Scan, $sc.Scan, $wifi.Scan, $rep.Rec, $upd.Check)) { if ($b) { Set-Primary $b } }
 Initialize-Shell
 
 if (-not $TestMode) { [void]$form.ShowDialog() }

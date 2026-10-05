@@ -20,9 +20,11 @@ namespace CleanSweep.Pages
                                 "It is faster and stays responsive while it works.", null, Theme.Sub));
             flow.Controls.Add(L("Ready in this preview", Theme.Section, null, 18));
             flow.Controls.Add(L("- Dashboard: health score and history, recommendations, live hardware monitor, Quick clean and Restore point"));
+            flow.Controls.Add(L("- Automatic cleanup: schedule, plugged-in/idle conditions, notification, history (shared with the main app)"));
+            flow.Controls.Add(L("- Large files: biggest files by type on any drive, app and game files hidden, Recycle Bin only"));
             flow.Controls.Add(L("- Cleanup: junk and temp files, other drives, old Recycle Bin items, files that can't be deleted, ignore list"));
             flow.Controls.Add(L("Still in the main CleanSweep app for now", Theme.Section, null, 18));
-            flow.Controls.Add(L("- Automatic cleanup, Drives, Repair, Broken Shortcuts, Network Optimizer, Registry cleaner, updates", null, Theme.Sub));
+            flow.Controls.Add(L("- Drives (check and optimize), Repair, Broken Shortcuts, Network Optimizer, Registry cleaner, updates", null, Theme.Sub));
             flow.Controls.Add(L("Settings", Theme.Section, null, 18));
             flow.Controls.Add(L("Shared with the main app: " + AppPaths.Settings, null, Theme.Sub));
             flow.Controls.Add(L("Your ignore list, file age and Recycle Bin choices are the same in both editions.", null, Theme.Sub));

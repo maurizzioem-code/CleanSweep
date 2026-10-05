@@ -32,6 +32,11 @@ namespace CleanSweep.Pages
         readonly TableLayoutPanel grid = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(0, 4, 0, 0) };
         readonly Card health = new Card(), acts = new Card();
         bool? stacked; int tileCols;
+        // automatic cleanup card
+        public readonly Label AcStatus, AcLast; readonly Label acIcon;
+        public readonly CsButton AcRun = new CsButton("Run now") { MinimumSize = new Size(100, 34), Margin = new Padding(0, 0, 8, 0) };
+        public readonly CsButton AcSet = new CsButton("Set up schedule", true) { MinimumSize = new Size(150, 34), Margin = new Padding(0) };
+        public AutoCleanForm ScheduleForm { get; private set; }
 
         public List<Finding> Findings { get; private set; } = new List<Finding>();
         public bool Checking { get; private set; }
@@ -100,7 +105,18 @@ namespace CleanSweep.Pages
             recBottom.Controls.Add(Advice); recBottom.Controls.Add(DoAction); recBottom.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 8 }); recBottom.Controls.Add(SaveReport);
             rec.Controls.Add(List); rec.Controls.Add(recBottom);
 
-            Ui.Stack(scroll, hdr, row1, Spacer(8), L("Hardware monitor", Theme.UiFont(11, FontStyle.Bold), Theme.Text, 30), row2, Spacer(8),
+            // ---- automatic cleanup
+            var ac = new Card { Dock = DockStyle.Top, Height = 100, Padding = new Padding(16, 12, 16, 12) };
+            acIcon = L(UI.Glyph.Update, Theme.IconFont(20), Theme.Accent, 0, DockStyle.Left); acIcon.Width = 44; acIcon.TextAlign = ContentAlignment.MiddleLeft;
+            AcStatus = L("Off", Theme.UiFont(9.5f), Theme.Sub, 22); AcLast = L("", Theme.UiFont(9.5f), Theme.Sub, 22);
+            var acText = new Panel { Dock = DockStyle.Fill }; Ui.Stack(acText, L("Automatic cleanup", Theme.UiFont(11, FontStyle.Bold), Theme.Text, 26), AcStatus, AcLast);
+            var acBtns = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Padding = new Padding(0, 18, 0, 0) };
+            acBtns.Controls.AddRange(new Control[] { AcRun, AcSet });
+            ac.Controls.Add(acText); ac.Controls.Add(acIcon); ac.Controls.Add(acBtns);
+            AcRun.Click += async (s, e) => await RunAutoCleanNow();
+            AcSet.Click += (s, e) => ShowSchedule();
+
+            Ui.Stack(scroll, hdr, row1, Spacer(8), ac, Spacer(8), L("Hardware monitor", Theme.UiFont(11, FontStyle.Bold), Theme.Text, 30), row2, Spacer(8),
                      L("Recommendations", Theme.UiFont(11, FontStyle.Bold), Theme.Text, 30), rec, Spacer(12));
 
             Run.Click += async (s, e) => await RunCheckAsync();
@@ -226,6 +242,7 @@ namespace CleanSweep.Pages
             else if (action.StartsWith("settings:")) Shell.Open(action.Substring(9));
             else if (action.StartsWith("run:")) { var parts = action.Substring(4).Split(new[] { ' ' }, 2); Shell.Open(parts[0], parts.Length > 1 ? parts[1] : null); }
             else if (action == "battery") BatteryReport();
+            else if (action == "schedule") ShowSchedule();
         }
         void BatteryReport()
         {
@@ -265,6 +282,11 @@ namespace CleanSweep.Pages
                     Program.Form.ShowPage(cl); cl.TickDefaults();
                     await cl.ScanAsync(); if (cl.Clean.Enabled) await cl.CleanAsync();
                     break;
+                case "space":
+                    var lf = Program.Form.Page<LargeFilesPage>(); if (lf == null) return;
+                    Program.Form.ShowPage(lf);
+                    if (!lf.Busy && !lf.Searched) { foreach (var d in lf.Drives) d.Checked = ((string)d.Tag).StartsWith(AppPaths.SystemDrive, StringComparison.OrdinalIgnoreCase); await lf.SearchAsync(); }
+                    break;
                 case "restore":
                     tile.Sub = "Creating restore point..."; var f = FindForm(); if (f != null) f.Cursor = Cursors.WaitCursor;
                     bool ok = await Task.Run(() => RestorePoint.Create("CleanSweep - manual restore point"));
@@ -279,7 +301,7 @@ namespace CleanSweep.Pages
         public void UpdateTileAvailability()
         {
             var have = new HashSet<string>(Program.Form?.Pages.Select(p => p.Title) ?? Enumerable.Empty<string>());
-            var needs = new Dictionary<string, string> { ["clean"] = "Cleanup", ["space"] = "Drives", ["repair"] = "Repair", ["optimize"] = "Drives", ["network"] = "Network Optimizer" };
+            var needs = new Dictionary<string, string> { ["clean"] = "Cleanup", ["space"] = "Large files", ["repair"] = "Repair", ["optimize"] = "Drives", ["network"] = "Network Optimizer" };
             foreach (var t in Tiles.Values)
             {
                 bool ok = !needs.TryGetValue(t.Key, out var page) || have.Contains(page);
@@ -350,11 +372,50 @@ namespace CleanSweep.Pages
 
         public override void OnShown()
         {
-            UpdateTileAvailability();
+            UpdateTileAvailability(); UpdateAutoCleanCard();
             // Windows scrolls a panel to whichever control has focus; start at the top with the Run button focused
             Run.Focus(); ScrollToTop();
             if (IsHandleCreated) BeginInvoke(new Action(ScrollToTop));
         }
+        // ---------------------------------------------------------------- automatic cleanup
+        public void UpdateAutoCleanCard()
+        {
+            var st = AutoClean.State(); var cfg = AutoCleanConfig.Load();
+            if (st.Exists && st.Enabled)
+            {
+                AcStatus.Text = "On - " + cfg.Describe() + (st.NextRun != null ? "  \u00B7  next run " + st.NextRun.Value.ToString("ddd MMM d, h:mm tt") : "");
+                AcStatus.ForeColor = Theme.Text; acIcon.ForeColor = Theme.Ok; AcSet.Text = "Change schedule";
+            }
+            else { AcStatus.Text = "Off - CleanSweep only cleans when you ask it to."; AcStatus.ForeColor = Theme.Sub; acIcon.ForeColor = Theme.Accent; AcSet.Text = "Set up schedule"; }
+            var h = AutoClean.History().LastOrDefault();
+            AcLast.Text = h != null ? $"{(h.Trigger == "Scheduled" ? "Last automatic run" : "Last run")} {h.Time:MMM d, h:mm tt} - freed {Fmt.Size(h.Freed)} ({Fmt.Files(h.Files)})"
+                                    : "Removes temp files and update leftovers in the background, even when CleanSweep is closed.";
+        }
+
+        public void ShowSchedule()
+        {
+            var f = new AutoCleanForm(Program.AppIcon); ScheduleForm = f;
+            f.FormClosed += (s, e) => { UpdateAutoCleanCard(); ScheduleForm = null; };
+            if (Msg.Test) { f.Show(FindForm()); Application.DoEvents(); }   // the self-test drives it
+            else { f.ShowDialog(FindForm()); f.Dispose(); }
+        }
+
+        /// <summary>Runs the cleanup now with the saved choices, in a separate process exactly like the schedule does.</summary>
+        public Task RunAutoCleanNow() => Running = DoAutoClean();
+        async Task DoAutoClean()
+        {
+            if (!AcRun.Enabled) return;
+            if (!AutoCleanConfig.Saved) AutoCleanConfig.Load().Save();
+            AcRun.Enabled = false; AcRun.Text = "Cleaning..."; AcLast.Text = "Cleaning junk files in the background...";
+            try
+            {
+                var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Application.ExecutablePath, "--autoclean Manual") { UseShellExecute = false, CreateNoWindow = true });
+                await Task.Run(() => p.WaitForExit(30 * 60 * 1000));
+            }
+            catch (Exception e) { Msg.Show("Could not start the cleanup: " + e.Message, "CleanSweep", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            AcRun.Enabled = true; AcRun.Text = "Run now"; UpdateAutoCleanCard();
+        }
+
         public void ScrollTo(Control c) { var p = scroll.PointToClient(c.PointToScreen(Point.Empty)); scroll.AutoScrollPosition = new Point(0, p.Y - scroll.AutoScrollPosition.Y - 40); }
         public void ScrollToTop() => scroll.AutoScrollPosition = new Point(0, 0);
         public Control RecommendationsCard => List.Parent;

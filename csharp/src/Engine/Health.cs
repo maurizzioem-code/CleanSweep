@@ -40,8 +40,17 @@ namespace CleanSweep.Engine
         {
             ("Storage", Storage), ("Drive health", DriveHealth), ("Memory", Memory), ("Startup apps", StartupApps),
             ("Security", Security), ("Windows Update", WindowsUpdate), ("Uptime", Uptime), ("Junk files", JunkFiles),
-            ("Battery", Battery), ("Devices", Devices), ("Stability", Stability), ("Internet", Internet),
+            ("Battery", Battery), ("Devices", Devices), ("Stability", Stability), ("Internet", Internet), ("Automatic cleanup", AutoCleanCheck),
         };
+
+        // Info only - it never lowers the score
+        static IEnumerable<Finding> AutoCleanCheck()
+        {
+            var st = AutoClean.State();
+            if (st.Exists && st.Enabled) yield return new Finding("Automatic cleanup", Status.OK, "On - " + AutoCleanConfig.Load().Describe());
+            else yield return new Finding("Automatic cleanup", Status.Info, "Off - junk builds up until you clean it",
+                "Schedule a weekly cleanup of temp files and update leftovers. It runs in the background and skips anything recent or in use.", "schedule", "Set up schedule");
+        }
 
         public static List<Finding> RunCheck(string name, Func<IEnumerable<Finding>> check)
         {
@@ -67,11 +76,11 @@ namespace CleanSweep.Engine
                 bool sys = id.Equals(Sys, StringComparison.OrdinalIgnoreCase);
                 if ((sys && free < 10L << 30) || pct < 10)
                     yield return new Finding("Storage", Status.Problem, $"{id} is almost full: {f} free ({pct}%)",
-                        "Windows slows down and updates can fail when the system drive is nearly full. Clean junk files, then use Find large files on the Drives tab to spot big files you don't need.",
-                        "page:Drives", "Free up space").Fallback("settings:ms-settings:storagesense", "Open Storage settings");
+                        "Windows slows down and updates can fail when the system drive is nearly full. Clean junk files, then use Large files to spot big files you don't need (or move them to another drive).",
+                        "page:Large files", "Find large files").Fallback("settings:ms-settings:storagesense", "Open Storage settings");
                 else if (pct < 20)
                     yield return new Finding("Storage", Status.Warning, $"{id} is getting full: {f} free ({pct}%)",
-                        "Keeping at least 15-20% free helps performance and leaves room for updates.", "page:Cleanup", "Clean junk files");
+                        "Keeping at least 15-20% free helps performance and leaves room for updates. Clean junk files first; Large files shows what else takes up space.", "page:Cleanup", "Clean junk files");
                 else yield return new Finding("Storage", Status.OK, $"{id} {f} free ({pct}%)");
             }
         }

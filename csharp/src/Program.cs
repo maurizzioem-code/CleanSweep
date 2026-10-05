@@ -17,6 +17,13 @@ namespace CleanSweep
         [STAThread]
         static int Main(string[] args)
         {
+            // Automatic cleanup (started by Task Scheduler or "Run now"): no window at all
+            if (args.Length > 0 && args[0] == "--autoclean")
+            {
+                Settings.Load();
+                var r = Engine.AutoClean.RunOnce(args.Length > 1 ? args[1] : "Scheduled");
+                return r == null ? 1 : 0;
+            }
             string testOut = null;
             for (int i = 0; i < args.Length; i++) if (args[i] == "--selftest" && i + 1 < args.Length) testOut = args[i + 1];
 
@@ -36,7 +43,7 @@ namespace CleanSweep
                 Settings.Load();
                 Form = new MainForm();
                 var dash = new DashboardPage();
-                Form.Build(new Page[] { dash, new CleanupPage(), new AboutPage() });
+                Form.Build(new Page[] { dash, new CleanupPage(), new LargeFilesPage(), new AboutPage() });
                 // First health check runs automatically when the window opens (read-only)
                 if (testOut == null) Form.Shown += async (s, e) => await dash.RunCheckAsync();
 

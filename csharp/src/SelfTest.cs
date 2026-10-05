@@ -24,6 +24,7 @@ namespace CleanSweep
         static string outDir, logFile;
         static MainForm form;
         static int steps, failed;
+        static AutoClean.TaskState taskBefore = new AutoClean.TaskState();
 
         public static int Run(MainForm f, string dir)
         {
@@ -34,10 +35,18 @@ namespace CleanSweep
             // The test changes settings (ignore list, temp age/mode). Settings are shared with the PowerShell
             // edition, so keep a copy and put the user's own settings back afterwards.
             string saved = null; try { if (File.Exists(Settings.FilePath)) saved = File.ReadAllText(Settings.FilePath); } catch { }
+            // ...and the user's automatic cleanup task, if they have one
+            taskBefore = AutoClean.State(); string taskXml = taskBefore.Exists ? taskBefore.Xml : null;
             form.Shown += async (s, e) =>
             {
                 try { await RunAll(); }
                 catch (Exception ex) { Note("TEST HARNESS ERROR: " + ex); failed++; }
+                try
+                {
+                    if (taskXml != null) AutoClean.RegisterXml(taskXml); else AutoClean.DeleteTaskOnly();
+                    Note(taskXml != null ? "Your automatic cleanup schedule was put back as it was." : "No automatic cleanup schedule was left behind.");
+                }
+                catch (Exception ex) { Note("Could not put the schedule back: " + ex.Message); failed++; }
                 try
                 {
                     if (saved != null) File.WriteAllText(Settings.FilePath, saved, new System.Text.UTF8Encoding(false)); else if (File.Exists(Settings.FilePath)) File.Delete(Settings.FilePath);
@@ -408,12 +417,170 @@ namespace CleanSweep
                 Check(form.Current is CleanupPage, "Quick clean should show the Cleanup page");
                 Check(!cl.Busy && cl.Status.Text.Length > 0, "Quick clean did not finish");
             });
+            // ---------------------------------------------------------------- automatic cleanup
+            await Step("Automatic cleanup: settings window creates the task", () =>
+            {
+                form.ShowPage(dash); Pump(100);
+                Note("    before: " + (taskBefore.Exists ? "task exists (" + taskBefore.Command + ")" : "no task"));
+                dash.ShowSchedule(); var f = dash.ScheduleForm; Pump(200); Shot("autoclean-settings", f);
+                f.On.Checked = true; f.Freq.SelectedIndex = 1; f.Day.SelectedItem = "Saturday"; f.Time.SelectedIndex = 38;
+                foreach (var c in f.Cats) c.Checked = CleanEngine.DefaultOn.Contains((string)c.Tag);
+                f.RecycleOn.Checked = false; f.ACOnly.Checked = true; f.Idle.Checked = false; f.CatchUp.Checked = true; f.Notify.Checked = false;
+                f.DoSave(); Pump(200);
+                Check(f.Saved, "not saved: " + f.Tip.Text);
+                var st = AutoClean.State(); Note($"    task: {st.Command}  next run {st.NextRun}");
+                Check(st.Exists && st.Enabled, "task not created");
+                Check(st.Xml.Contains("<Saturday />") && st.Xml.Contains("<WeeksInterval>1</WeeksInterval>"), "wrong day or interval");
+                Check(st.Xml.Contains("<DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>") && st.Xml.Contains("<StartWhenAvailable>true</StartWhenAvailable>"), "conditions not saved");
+                Check(st.Command.StartsWith(AutoClean.RunnerExe, StringComparison.OrdinalIgnoreCase) && File.Exists(AutoClean.RunnerExe), "task should run the installed copy " + AutoClean.RunnerExe);
+                Check(st.NextRun != null && st.NextRun.Value.DayOfWeek == DayOfWeek.Saturday && st.NextRun.Value.Hour == 19, "next run should be a Saturday at 7 PM");
+                Note("    card: " + dash.AcStatus.Text);
+                Check(dash.AcStatus.Text.StartsWith("On - every Saturday at 7:00"), "card not updated");
+                var cfg = AutoCleanConfig.Load(); Check(cfg.Enabled && !cfg.Notify && cfg.Cats.Count > 0, "settings not saved");
+            });
+            await Step("Automatic cleanup: daily and every 4 weeks", () =>
+            {
+                var cfg = AutoCleanConfig.Load();
+                cfg.Freq = "Daily"; AutoClean.Schedule(cfg); var a = AutoClean.State();
+                Check(a.Xml.Contains("<DaysInterval>1</DaysInterval>"), "daily schedule wrong"); Note("    daily: next run " + a.NextRun);
+                cfg.Freq = "Monthly"; cfg.Day = "Wednesday"; cfg.Idle = true; AutoClean.Schedule(cfg); var b = AutoClean.State();
+                Check(b.Xml.Contains("<WeeksInterval>4</WeeksInterval>") && b.Xml.Contains("<Wednesday />") && b.Xml.Contains("<RunOnlyIfIdle>true</RunOnlyIfIdle>"), "4-weekly schedule wrong");
+                Note("    every 4 weeks: next run " + b.NextRun + "  - " + cfg.Describe());
+                cfg.Freq = "Weekly"; cfg.Day = "Saturday"; cfg.Idle = false; AutoClean.Schedule(cfg);
+            });
+            string acJunk = Path.Combine(CleanEngine.MyTemp, "CleanSweepAutoCleanTest-old.tmp");
+            await Step("Automatic cleanup: Run now", async () =>
+            {
+                Old(acJunk); int before = AutoClean.History().Count;
+                var sw = Stopwatch.StartNew(); await dash.RunAutoCleanNow();
+                var h = AutoClean.History(); Note($"    {sw.Elapsed.TotalSeconds:0.0}s  card: {dash.AcLast.Text}");
+                Check(h.Count == before + 1 || (before >= 100 && h.Count == 100), "no history entry");
+                Check(h.Last().Trigger == "Manual", "trigger should be Manual");
+                Note("    " + AutoClean.Summary(h.Last()) + "  [" + h.Last().Details + "]");
+                Check(!File.Exists(acJunk), "old junk file was not cleaned");
+                Check(dash.AcLast.Text.StartsWith("Last run"), "card not updated");
+            });
+            await Step("Automatic cleanup: the scheduled task really runs", async () =>
+            {
+                Old(acJunk); int before = AutoClean.History().Count(r => r.Trigger == "Scheduled");
+                AutoClean.RunTaskNow(); var sw = Stopwatch.StartNew();
+                while (AutoClean.History().Count(r => r.Trigger == "Scheduled") == before && sw.ElapsedMilliseconds < 120000) { Pump(500); await Task.Delay(1); }
+                var last = AutoClean.History().LastOrDefault();
+                Note($"    after {sw.Elapsed.TotalSeconds:0}s: {(last != null ? last.Trigger + " - " + AutoClean.Summary(last) : "nothing")}");
+                try { foreach (var l in File.ReadAllLines(AutoClean.LogFile).Reverse().Take(2).Reverse()) Note("    log: " + l); } catch { }
+                Check(last != null && last.Trigger == "Scheduled" && AutoClean.History().Count(r => r.Trigger == "Scheduled") > before, "Task Scheduler did not run the cleanup");
+                Check(!File.Exists(acJunk), "old junk file was not cleaned by the scheduled run");
+            });
+            await Step("Automatic cleanup: health check and PowerShell history format", () =>
+            {
+                var f = Health.RunCheck("Automatic cleanup", Health.Checks.First(c => c.Name == "Automatic cleanup").Run);
+                Note("    " + string.Join(" | ", f.Select(x => $"[{x.Status}] {x.Text}")));
+                Check(f.Count == 1 && f[0].Status == Engine.Status.OK, "health check should say On");
+                string ps = Path.Combine(outDir, "ps-autoclean-history.csv");
+                File.WriteAllText(ps, "\"Time\",\"Trigger\",\"Freed\",\"Files\",\"Skipped\",\"Seconds\",\"Details\"\r\n\"2026-09-27T19:00:04.1234567-06:00\",\"Scheduled\",\"52428800\",\"120\",\"7\",\"3\",\"User Temp Files 50.0 MB; Recycle Bin 0 KB\"\r\n", new System.Text.UTF8Encoding(true));
+                var h = AutoClean.History(ps); Check(h.Count == 1 && h[0].Freed == 52428800 && h[0].Files == 120 && h[0].Details.Contains("; "), "PowerShell history not read");
+            });
+            dash.ScrollToTop(); Pump(200); Shot("dashboard-autoclean");
+            await Step("Automatic cleanup: turning it off removes the task", () =>
+            {
+                dash.ShowSchedule(); var f = dash.ScheduleForm; f.On.Checked = false; f.DoSave(); Pump(200);
+                Check(!AutoClean.State().Exists, "task still exists");
+                Check(!AutoCleanConfig.Load().Enabled, "still marked as on");
+                Note("    card: " + dash.AcStatus.Text); Check(dash.AcStatus.Text.StartsWith("Off"), "card not updated");
+            });
+
+            // ---------------------------------------------------------------- large files
+            var lf = form.Page<LargeFilesPage>();
+            string lroot = Path.Combine(CleanEngine.MyTemp, "CleanSweepLargeTest"), lout = Path.Combine(Environment.GetEnvironmentVariable("PUBLIC"), "CleanSweepLargeOutside");
+            await Step("Large files: finds big files, never follows links", async () =>
+            {
+                form.ShowPage(lf); Pump(100);
+                if (Directory.Exists(Path.Combine(lroot, "link"))) RemoveJunction(Path.Combine(lroot, "link"));
+                Reset(lroot); Reset(lout);
+                void Big(string path, long mb) { Directory.CreateDirectory(Path.GetDirectoryName(path)); using (var fs = File.Create(path)) fs.SetLength(mb << 20); }
+                Big(Path.Combine(lroot, "old-backup.iso"), 120); Big(Path.Combine(lroot, @"Videos\holiday.mp4"), 150);
+                Big(Path.Combine(lroot, @"AppData\Local\SomeGame\data.pak"), 110); Big(Path.Combine(lroot, "small.bin"), 5);
+                Big(Path.Combine(lout, "outside.bin"), 130); Junction(Path.Combine(lroot, "link"), lout);
+                lf.MinSize.SelectedIndex = 0; lf.HideApps.Checked = true;
+                await lf.SearchAsync(new[] { lroot });
+                Note("    " + lf.Status.Text); Note("    " + lf.Summary.Text);
+                foreach (var x in lf.Found) Note($"      {Fmt.Size(x.Size),10}  {x.Kind,-20} {x.Path}");
+                Check(lf.Found.Count == 3, "expected 3 large files, found " + lf.Found.Count);
+                Check(!lf.Found.Any(x => x.Name == "outside.bin"), "followed a link to another folder");
+                Check(lf.Found.First(x => x.Name == "old-backup.iso").Kind == "Disk image" && lf.Found.First(x => x.Name == "holiday.mp4").Kind == "Video", "wrong types");
+                Check(lf.Found.First(x => x.Name == "data.pak").IsApp, "AppData file should count as an app file");
+                Check(lf.List.Items.Count == 2, "app file should be hidden by default");
+                lf.HideApps.Checked = false; Pump(50); Check(lf.List.Items.Count == 3, "app file should show when not hidden"); lf.HideApps.Checked = true;
+                Check(lf.List.CheckedItems.Count == 0, "nothing should be ticked for the user");
+                Check(((LargeFile)lf.List.Items[0].Tag).Name == "holiday.mp4", "biggest file should be first");
+            });
+            await Step("Large files: Move ticked to Recycle Bin", () =>
+            {
+                var it = lf.List.Items.Cast<ListViewItem>().First(i => ((LargeFile)i.Tag).Name == "old-backup.iso"); it.Checked = true; Pump(50);
+                Check(lf.Recycle.Enabled, "button should enable when a file is ticked"); Note("    " + lf.Ticked.Text);
+                string path = ((LargeFile)it.Tag).Path; lf.RecycleTicked(); Pump(100);
+                Note("    " + lf.Status.Text);
+                Check(!File.Exists(path), "file still there"); Check(File.Exists(Path.Combine(lroot, @"Videos\holiday.mp4")), "unticked file was touched");
+                Check(lf.List.Items.Count == 1, "list not updated");
+                Note("    removed from Recycle Bin again: " + PurgeFromRecycleBin(path));
+            });
+            Shot("large-files-test");
+            try { RemoveJunction(Path.Combine(lroot, "link")); Directory.Delete(lroot, true); Directory.Delete(lout, true); } catch { }
+            await Step("Large files: search the Windows drive", async () =>
+            {
+                foreach (var dcb in lf.Drives) dcb.Checked = ((string)dcb.Tag).StartsWith(AppPaths.SystemDrive, StringComparison.OrdinalIgnoreCase);
+                Note("    drives: " + string.Join(" | ", lf.Drives.Select(x => x.Text)));
+                lf.MinSize.SelectedIndex = 0; var sw = Stopwatch.StartNew(); var t = lf.SearchAsync(); int ticks = 0;
+                var ui = new System.Windows.Forms.Timer { Interval = 100 }; ui.Tick += (s2, e2) => ticks++; ui.Start();
+                while (!t.IsCompleted && sw.ElapsedMilliseconds < 90000) { Pump(200); await Task.Delay(1); }
+                bool cancelled = false;
+                if (!t.IsCompleted) { Note("    still searching after 90 s - testing Cancel"); lf.Stop.PerformClick(); cancelled = true; }
+                await t; ui.Stop();
+                Note($"    {lf.Status.Text}  (UI timer ticked {ticks} times in {sw.Elapsed.TotalSeconds:0} s)");
+                Check(ticks > sw.ElapsedMilliseconds / 400, "window froze while searching");
+                if (cancelled) Check(lf.Status.Text.StartsWith("Cancelled"), "Cancel did not stop the search");
+                else
+                {
+                    Note("    " + lf.Summary.Text);
+                    foreach (var x in lf.Visible.Take(8)) Note($"      {Fmt.Size(x.Size),10}  {x.Kind,-12} {x.Path}");
+                    Check(lf.Status.Text.StartsWith("Found") || lf.Status.Text.StartsWith("No files"), "search did not finish");
+                }
+            });
+            Shot("large-files");
+            await Step("Dashboard: Free up space tile opens Large files", () =>
+            {
+                form.ShowPage(dash); Pump(100);
+                Check(dash.Tiles["space"].Available, "tile should be available now"); Note("    " + dash.Tiles["space"].Sub);
+                var storage = new Finding("Storage", Engine.Status.Problem, "x", "", "page:Large files", "Find large files").Fallback("settings:ms-settings:storagesense", "Open Storage settings");
+                Check(dash.Resolve(storage).Action == "page:Large files", "storage finding should open Large files");
+                dash.RunAction(storage); Pump(50); Check(form.Current is LargeFilesPage, "did not open Large files"); form.ShowPage(dash);
+            });
+
             await Step("Messages asked during the test", () => { foreach (var m in Msg.Log) Note("  " + m); foreach (var o in Shell.TestOpened) Note("  [would open] " + o); });
             form.ShowPage(cl); Shot("cleanup-final");
             form.ShowPage(dash); Pump(300); Shot("dashboard-final"); SetSize(new Size(960, 640)); Pump(300); dash.ScrollToTop(); Shot("dashboard-960"); SetSize(new Size(1024, 720));
         }
 
         // ---------------------------------------------------------------- helpers
+        /// <summary>Removes a test file from the Recycle Bin again ($I file = deletion record holding the original path).</summary>
+        static string PurgeFromRecycleBin(string original)
+        {
+            try
+            {
+                string bin = Path.Combine(Path.GetPathRoot(original), "$Recycle.Bin", CleanEngine.MySid);
+                foreach (var i in new DirectoryInfo(bin).GetFiles("$I*"))
+                {
+                    var b = File.ReadAllBytes(i.FullName); if (b.Length < 28) continue;
+                    string p = BitConverter.ToInt64(b, 0) >= 2 ? System.Text.Encoding.Unicode.GetString(b, 28, Math.Min(b.Length - 28, BitConverter.ToInt32(b, 24) * 2)) : System.Text.Encoding.Unicode.GetString(b, 24, Math.Min(b.Length - 24, 520));
+                    if (!p.TrimEnd('\0').Equals(original, StringComparison.OrdinalIgnoreCase)) continue;
+                    string r = Path.Combine(bin, "$R" + i.Name.Substring(2));
+                    if (File.Exists(r)) File.Delete(r); else if (Directory.Exists(r)) Directory.Delete(r, true);
+                    i.Delete(); return "yes";
+                }
+                return "not found";
+            }
+            catch (Exception e) { return "failed: " + e.Message; }
+        }
         static void Reset(string dir) { try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { } Directory.CreateDirectory(dir); }
         static void Old(string path)
         {

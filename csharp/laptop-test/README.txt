@@ -14,3 +14,9 @@ What the test does on your PC:
 - Creates its own small test files in your Temp folder (removed by the test) and moves one
   test file to the Recycle Bin (you can empty it or leave it).
 - Puts your CleanSweep settings back exactly as they were.
+- Briefly creates the "CleanSweep\Automatic cleanup" scheduled task, runs it once
+  (it only removes junk older than a day), then puts your own schedule back - or
+  removes the task if you didn't have one.
+- Creates a few large empty test files in C:\Users\Public, moves one to the Recycle Bin
+  and removes it from there again, then deletes the rest. It also searches C: for
+  large files for up to 90 seconds (it only reads, nothing is changed).

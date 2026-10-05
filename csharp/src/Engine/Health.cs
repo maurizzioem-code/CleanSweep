@@ -198,9 +198,9 @@ namespace CleanSweep.Engine
             if (last != null)
             {
                 int days = (int)(DateTime.Now - last.Value.ToLocalTime()).TotalDays;
-                if (days > 45) yield return new Finding("Windows Update", Status.Warning, $"Updates last installed {days} days ago",
+                if (days > 45) yield return new Finding("Windows Update", Status.Warning, $"Updates last installed {Fmt.Count(days, "day")} ago",
                     "Security fixes come out monthly. Check Windows Update; if updates keep failing, use Repair Windows Update on the Repair tab.", wu, wuText);
-                else yield return new Finding("Windows Update", Status.OK, $"Updates installed {days} days ago");
+                else yield return new Finding("Windows Update", Status.OK, days == 0 ? "Updates installed today" : $"Updates installed {Fmt.Count(days, "day")} ago");
             }
             else yield return new Finding("Windows Update", Status.Info, "Last update date not available", "", wu, wuText);
             bool pending = KeyExists(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") || KeyExists(@"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired");
@@ -213,8 +213,8 @@ namespace CleanSweep.Engine
         {
             var boot = BootTime() ?? throw new Exception("boot time not available");
             int d = (int)(DateTime.Now - boot).TotalDays;
-            if (d >= 14) yield return new Finding("Uptime", Status.Warning, $"Not restarted for {d} days", "A restart clears memory leaks and finishes pending updates. (Shut down with Fast Startup doesn't count as a restart.)");
-            else yield return new Finding("Uptime", Status.OK, $"Restarted {d} day(s) ago");
+            if (d >= 14) yield return new Finding("Uptime", Status.Warning, $"Not restarted for {Fmt.Count(d, "day")}", "A restart clears memory leaks and finishes pending updates. (Shut down with Fast Startup doesn't count as a restart.)");
+            else yield return new Finding("Uptime", Status.OK, d == 0 ? "Restarted today" : $"Restarted {Fmt.Count(d, "day")} ago");
         }
 
         static IEnumerable<Finding> JunkFiles()
@@ -248,7 +248,7 @@ namespace CleanSweep.Engine
             if (bad.Count > 0)
             {
                 var names = bad.Take(3).Select(d => Wmi.Str(d, "Name") is string n && n.Length > 0 ? n : Wmi.Str(d, "Description") is string s && s.Length > 0 ? s : Wmi.Str(d, "PNPDeviceID"));
-                yield return new Finding("Devices", Status.Warning, $"{bad.Count} device(s) not working: {string.Join("; ", names)}",
+                yield return new Finding("Devices", Status.Warning, $"{Fmt.Count(bad.Count, "device")} not working: {string.Join("; ", names)}",
                     "Usually a missing or broken driver. Device Manager shows the error; Windows Update > Optional updates may have the driver.", "run:devmgmt.msc", "Open Device Manager");
             }
             else yield return new Finding("Devices", Status.OK, "All devices are working");
@@ -267,11 +267,11 @@ namespace CleanSweep.Engine
             int power = Events("System", "Microsoft-Windows-Kernel-Power", 41, 30).Count;
             var apps = Events("Application", "Application Error", 1000, 7);
             const string rel = "run:perfmon.exe /rel", relText = "Open Reliability Monitor";
-            if (bsod > 0) yield return new Finding("Stability", Status.Problem, $"{bsod} blue-screen crash(es) in the last 30 days",
+            if (bsod > 0) yield return new Finding("Stability", Status.Problem, $"{Fmt.Count(bsod, "blue-screen crash", "blue-screen crashes")} in the last 30 days",
                 "Repeated blue screens usually point to a driver or hardware problem. Note the stop code in Reliability Monitor and update the related driver. If Windows files are damaged, the Recommended repair on the Repair tab can fix them.",
                 "page:Repair", "Open Repair tools").Fallback(rel, relText);
-            else if (power > 0) yield return new Finding("Stability", Status.Warning, $"{power} unexpected shutdown(s) in the last 30 days", "The PC lost power or froze. If you didn't hold the power button, check Reliability Monitor.", rel, relText);
-            else yield return new Finding("Stability", Status.OK, "No crashes or unexpected shutdowns in 30 days");
+            else if (power > 0) yield return new Finding("Stability", Status.Warning, $"{Fmt.Count(power, "unexpected shutdown")} in the last 30 days", "The PC lost power or froze. If you didn't hold the power button, check Reliability Monitor.", rel, relText);
+            else yield return new Finding("Stability", Status.OK, "No blue screens or unexpected shutdowns in 30 days");
             if (apps.Count >= 5)
             {
                 var top = apps.Select(e => { try { return e.Properties.Count > 0 ? e.Properties[0].Value?.ToString() : null; } catch { return null; } })

@@ -164,7 +164,7 @@ namespace CleanSweep.Engine
             }
             foreach (var pd in Wmi.TryQuery("SELECT * FROM MSFT_PhysicalDisk", @"root\Microsoft\Windows\Storage", 5))
             {
-                try { foreach (ManagementBaseObject rc in pd.GetRelated("MSFT_StorageReliabilityCounter")) { long t = Wmi.Long(rc, "Temperature"); if (t > 0) temps.Add($"Drive {Wmi.Str(pd, "DeviceId")} {t} \u00B0C"); break; } } catch { }
+                try { foreach (ManagementBaseObject rc in pd.GetRelated("MSFT_StorageReliabilityCounter")) { long t = Wmi.Long(rc, "Temperature"); if (t > 0) temps.Add($"{(Wmi.Long(pd, "MediaType") == 4 ? "SSD" : "Drive")} {t} \u00B0C"); break; } } catch { }
             }
             return temps;
         }
@@ -174,17 +174,20 @@ namespace CleanSweep.Engine
     public static class RestorePoint
     {
         const string Key = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore";
+        /// <summary>What happened last time (for the log and self-test).</summary>
+        public static string LastResult = "";
+        public static int LastCode = -1;
 
         static long LastSequence() => Wmi.TryQuery("SELECT SequenceNumber FROM SystemRestore", @"root\default").Select(o => Wmi.Long(o, "SequenceNumber")).DefaultIfEmpty(0).Max();
 
-        /// <summary>Creates a restore point. Returns false if System Restore is off or unavailable.</summary>
+        /// <summary>Creates a restore point. Windows' own result code decides success (0 = created).</summary>
         public static bool Create(string description)
         {
             ManagementClass sr;
             try { sr = new ManagementClass(new ManagementScope(@"root\default"), new ManagementPath("SystemRestore"), null); sr.Get(); }
-            catch { return false; }   // not available (e.g. Windows Server)
+            catch (Exception e) { LastCode = -1; LastResult = "System Restore not available on this edition of Windows (" + e.Message + ")"; return false; }
             long before = LastSequence();
-            object old = null; RegistryKey k = null;
+            object old = null; RegistryKey k = null; var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 // Windows normally allows only one restore point per 24 hours; lift that limit just for this call
@@ -192,16 +195,25 @@ namespace CleanSweep.Engine
                 k?.SetValue("SystemRestorePointCreationFrequency", 0, RegistryValueKind.DWord);
                 var inp = sr.GetMethodParameters("CreateRestorePoint");
                 inp["Description"] = description; inp["RestorePointType"] = 12 /* MODIFY_SETTINGS */; inp["EventType"] = 100 /* BEGIN_SYSTEM_CHANGE */;
-                sr.InvokeMethod("CreateRestorePoint", inp, null);
+                var res = sr.InvokeMethod("CreateRestorePoint", inp, null);
+                LastCode = Convert.ToInt32(res?["ReturnValue"] ?? -1);
             }
-            catch (Exception e) { Trace.Write("Restore point: " + e.Message); }
+            catch (Exception e) { LastCode = -1; LastResult = "error: " + e.Message; }
             finally
             {
                 try { if (old == null) k?.DeleteValue("SystemRestorePointCreationFrequency", false); else k?.SetValue("SystemRestorePointCreationFrequency", old, RegistryValueKind.DWord); } catch { }
                 k?.Dispose();
             }
             long after = LastSequence();
-            return after > 0 && after != before;
+            if (LastCode != -1 || LastResult.Length == 0)
+                LastResult = $"Windows result {LastCode}{(LastCode == 0 ? " (created)" : LastCode == 1058 ? " (System Restore is turned off)" : "")}, restore point number {before} -> {after}, {sw.Elapsed.TotalSeconds:0.0}s";
+            Trace.Write("Restore point: " + LastResult);
+            return LastCode == 0;
         }
+
+        public static string Explain() =>
+            LastCode == 1058 || LastCode == -1 && LastResult.StartsWith("System Restore not available")
+                ? "System Restore is turned off on this PC. Turn it on in Control Panel > System > System Protection (select C: > Configure > Turn on system protection), then try again."
+                : $"Windows could not create a restore point ({LastResult}). Try again in a few minutes, or create one in Control Panel > System > System Protection.";
     }
 }

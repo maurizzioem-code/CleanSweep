@@ -25,6 +25,8 @@ namespace CleanSweep
             return (b / 1024.0).ToString("N0") + " KB";
         }
         public static string Count(long n) => n.ToString("N0");
+        /// <summary>"1 day", "3 days" (or a custom plural).</summary>
+        public static string Count(long n, string one, string many = null) => n.ToString("N0") + " " + (n == 1 ? one : many ?? one + "s");
         public static string Files(long n) => n == 1 ? "1 file" : n.ToString("N0") + " files";
     }
 

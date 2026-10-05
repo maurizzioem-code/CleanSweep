@@ -71,13 +71,19 @@ namespace CleanSweep
             var sw = Stopwatch.StartNew();
             while (sw.ElapsedMilliseconds < ms) { Application.DoEvents(); System.Threading.Thread.Sleep(15); }
         }
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")] static extern int GetDeviceCaps(IntPtr hdc, int index);
+        static void SetSize(Size s) { if (form.WindowState != FormWindowState.Normal) form.WindowState = FormWindowState.Normal; form.Size = s; }
         static void Shot(string name, Form f = null)
         {
             f = f ?? form; Pump();
+            if (f == form && form.WindowState != FormWindowState.Normal) { Note($"    (window was {form.WindowState} - restored for the screenshot)"); SetSize(new Size(1024, 720)); Pump(); }
             using (var bmp = new Bitmap(f.Width, f.Height))
             {
-                try { using (var g = Graphics.FromImage(bmp)) g.CopyFromScreen(f.Location, Point.Empty, f.Size); }
-                catch { f.DrawToBitmap(bmp, new Rectangle(0, 0, f.Width, f.Height)); }
+                // PrintWindow works at any display scaling (125%, 150%...); copying the screen crops on scaled displays
+                bool ok = false;
+                using (var g = Graphics.FromImage(bmp)) { var dc = g.GetHdc(); try { ok = PrintWindow(f.Handle, dc, 2 /* PW_RENDERFULLCONTENT */); } finally { g.ReleaseHdc(dc); } }
+                if (!ok) f.DrawToBitmap(bmp, new Rectangle(0, 0, f.Width, f.Height));
                 bmp.Save(Path.Combine(outDir, name + ".png"), ImageFormat.Png);
             }
         }
@@ -113,6 +119,7 @@ namespace CleanSweep
             Note("Windows: " + Environment.OSVersion.VersionString + (Environment.Is64BitOperatingSystem ? " 64-bit" : ""));
             Note(".NET: " + Environment.Version + "   screen: " + Screen.PrimaryScreen.Bounds + "   admin: " +
                  new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent()).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator));
+            using (var g = Graphics.FromHwnd(IntPtr.Zero)) { var dc = g.GetHdc(); int phys = GetDeviceCaps(dc, 118 /* DESKTOPHORZRES */); g.ReleaseHdc(dc); Note($"Display scaling: {Math.Round(phys * 100.0 / Screen.PrimaryScreen.Bounds.Width)}% ({phys} pixels wide)"); }
             Pump(800);
             Note($"Window: {form.Size}  Title: {form.Text}  Pages: {string.Join(", ", form.Pages.Select(p => p.Title))}");
             var cl = form.Page<CleanupPage>();
@@ -120,11 +127,11 @@ namespace CleanSweep
             // ---------------------------------------------------------------- layout
             foreach (var size in new[] { new Size(1024, 720), new Size(960, 640) })
             {
-                form.Size = size; Pump(200);
+                SetSize(size); Pump(200);
                 foreach (var p in form.Pages)
                     await Step($"Layout: {p.Title} at {size.Width}x{size.Height}", () => { form.ShowPage(p); Pump(150); CheckLayout(p); Shot($"layout-{size.Width}x{size.Height}-{p.Title}"); });
             }
-            form.Size = new Size(1024, 720); form.ShowPage(cl); Pump(200);
+            SetSize(new Size(1024, 720)); form.ShowPage(cl); Pump(200);
 
             // ---------------------------------------------------------------- dashboard
             var dash = form.Page<DashboardPage>();
@@ -132,7 +139,7 @@ namespace CleanSweep
             foreach (var size in new[] { new Size(1024, 720), new Size(960, 640) })
                 await Step($"Dashboard: responsive layout at {size.Width}x{size.Height}", () =>
                 {
-                    form.Size = size; Pump(300);
+                    SetSize(size); Pump(300);
                     Note($"    score and actions stacked: {dash.Stacked}   tile columns: {dash.TileColumns}");
                     var bad = new List<string>();
                     foreach (var t in dash.Tiles.Values) if (t.Width < 150 || t.Height < 50) bad.Add($"tile '{t.Title}' too small ({t.Size})");
@@ -140,7 +147,7 @@ namespace CleanSweep
                     if (dash.List.Width < 500) bad.Add($"recommendations list too narrow ({dash.List.Width})");
                     if (bad.Count > 0) Fail(string.Join("; ", bad));
                 });
-            form.Size = new Size(1024, 720); Pump(200);
+            SetSize(new Size(1024, 720)); Pump(200);
             await Step("Dashboard: live hardware monitor", () =>
             {
                 var sw = Stopwatch.StartNew(); while (dash.Samples < 3 && sw.ElapsedMilliseconds < 15000) Pump(200);
@@ -215,7 +222,7 @@ namespace CleanSweep
                 Check(dash.Tiles["clean"].Available && dash.Tiles["restore"].Available, "Quick clean / Restore point should work");
                 Check(!dash.Tiles["repair"].Available, "Repair tile should wait for its page");
                 int m = Msg.Log.Count; await dash.QuickAction("repair"); Check(Msg.Log.Count == m + 1, "unavailable tile gave no message");
-                await dash.QuickAction("restore"); Note("    Restore point: " + dash.Tiles["restore"].Sub);
+                await dash.QuickAction("restore"); Note("    Restore point: " + dash.Tiles["restore"].Sub + "  (" + RestorePoint.LastResult + ")");
             });
 
             // ---------------------------------------------------------------- settings
@@ -253,6 +260,7 @@ namespace CleanSweep
             });
 
             // ---------------------------------------------------------------- cleanup page
+            SetSize(new Size(1024, 720)); form.ShowPage(cl); Pump(200);
             await Step("Cleanup: categories", () =>
             {
                 foreach (var i in cl.Rows) Note($"    [{(i.Checked ? "x" : " ")}] {i.Text}  ({cl.Target(i).Kind})");
@@ -402,7 +410,7 @@ namespace CleanSweep
             });
             await Step("Messages asked during the test", () => { foreach (var m in Msg.Log) Note("  " + m); foreach (var o in Shell.TestOpened) Note("  [would open] " + o); });
             form.ShowPage(cl); Shot("cleanup-final");
-            form.ShowPage(dash); Pump(300); Shot("dashboard-final"); form.Size = new Size(960, 640); Pump(300); dash.ScrollToTop(); Shot("dashboard-960"); form.Size = new Size(1024, 720);
+            form.ShowPage(dash); Pump(300); Shot("dashboard-final"); SetSize(new Size(960, 640)); Pump(300); dash.ScrollToTop(); Shot("dashboard-960"); SetSize(new Size(1024, 720));
         }
 
         // ---------------------------------------------------------------- helpers

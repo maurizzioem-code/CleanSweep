@@ -160,7 +160,8 @@ namespace CleanSweep.Pages
             int score = Health.Score(rows); ShowScore(score); ShowFindings(rows);
             await Task.Run(() => Health.SaveHistory(score, rows)); ShowHistory();
             int p = rows.Count(r => r.Status == Engine.Status.Problem), w = rows.Count(r => r.Status == Engine.Status.Warning);
-            Status.Text = p + w > 0 ? $"{p} problem(s) and {w} recommendation(s) - see Recommendations below." : "Everything looks good. Nothing needs doing.";
+            Status.Text = p + w == 0 ? "Everything looks good. Nothing needs doing." :
+                string.Join(" and ", new[] { p > 0 ? Fmt.Count(p, "problem") : null, w > 0 ? Fmt.Count(w, "recommendation") : null }.Where(x => x != null)) + " - see Recommendations below.";
             Run.Enabled = true; SaveReport.Enabled = true; Checking = false; if (f != null) f.Cursor = Cursors.Default;
         }
 
@@ -268,8 +269,9 @@ namespace CleanSweep.Pages
                     tile.Sub = "Creating restore point..."; var f = FindForm(); if (f != null) f.Cursor = Cursors.WaitCursor;
                     bool ok = await Task.Run(() => RestorePoint.Create("CleanSweep - manual restore point"));
                     if (f != null) f.Cursor = Cursors.Default;
-                    tile.Sub = ok ? "Created " + DateTime.Now.ToString("MMM d, h:mm tt") : "Not available (System Restore is off)";
-                    if (!ok) Msg.Show("A restore point could not be created. System Restore may be turned off - turn it on in Control Panel > System > System Protection.", "CleanSweep", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    tile.Sub = ok ? "Created " + DateTime.Now.ToString("MMM d, h:mm tt") : RestorePoint.LastCode == 1058 ? "System Restore is turned off" : "Could not create - click to retry";
+                    if (ok) Msg.Show("Restore point created: \"CleanSweep - manual restore point\".", "CleanSweep", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    else Msg.Show(RestorePoint.Explain(), "CleanSweep", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     break;
             }
         }

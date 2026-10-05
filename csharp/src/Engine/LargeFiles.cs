@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -56,55 +57,75 @@ namespace CleanSweep.Engine
             return "Other";
         }
 
+        // ---- fast directory reading: FindFirstFileEx with large fetch (no FileInfo objects, no extra disk reads)
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct FindData
+        {
+            public FileAttributes Attr; public long Created, Accessed; public uint WriteLow, WriteHigh, SizeHigh, SizeLow, Reserved0, Reserved1;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string Name;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)] public string Alt;
+        }
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern IntPtr FindFirstFileExW(string path, int infoLevel, out FindData data, int searchOp, IntPtr filter, int flags);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool FindNextFileW(IntPtr h, out FindData data);
+        [DllImport("kernel32.dll")] static extern bool FindClose(IntPtr h);
+        static readonly IntPtr Invalid = new IntPtr(-1);
+
+        /// <summary>
+        /// Searches with several threads sharing one queue of folders, so one huge folder (Users, Program Files)
+        /// doesn't leave the other threads idle.
+        /// </summary>
         public Task<List<LargeFile>> Run(IEnumerable<string> roots, long min, CancellationToken ct) => Task.Run(() =>
         {
-            var found = new ConcurrentBag<LargeFile>();
-            var starts = new List<DirectoryInfo>();
-            foreach (var r in roots)
+            var found = new ConcurrentBag<LargeFile>(); var queue = new ConcurrentQueue<string>(); int pending = 0;
+            foreach (var r in roots) { queue.Enqueue(r.TrimEnd('\\')); pending++; }
+            int workers = Math.Max(4, Math.Min(16, Environment.ProcessorCount * 2));
+            var threads = Enumerable.Range(0, workers).Select(_ => new Thread(() =>
             {
-                var root = new DirectoryInfo(r.EndsWith("\\") ? r : r + "\\");
-                // files right in the root, then each top-level folder in parallel (much faster on SSDs)
-                try { foreach (var f in root.EnumerateFiles()) Consider(f, min, found); } catch { }
-                try { foreach (var d in root.EnumerateDirectories()) if (Walkable(d)) starts.Add(d); } catch { }
-            }
-            Parallel.ForEach(starts, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, d => Walk(d, min, found, ct));
+                var spin = new SpinWait();
+                while (Volatile.Read(ref pending) > 0 && !ct.IsCancellationRequested)
+                {
+                    if (!queue.TryDequeue(out var dir)) { spin.SpinOnce(); continue; }
+                    try { ReadDir(dir, min, found, queue, ref pending); } catch { }
+                    Interlocked.Decrement(ref pending);
+                }
+            }) { IsBackground = true, Name = "CleanSweep large files" }).ToList();
+            threads.ForEach(t => t.Start()); threads.ForEach(t => t.Join());
+            ct.ThrowIfCancellationRequested();
             return found.OrderByDescending(f => f.Size).ToList();
         }, ct);
 
-        static bool Walkable(DirectoryInfo d)
+        void ReadDir(string dir, long min, ConcurrentBag<LargeFile> found, ConcurrentQueue<string> queue, ref int pending)
         {
+            Current = dir;
+            var h = FindFirstFileExW(@"\\?\" + dir + @"\*", 1 /* FindExInfoBasic */, out var d, 0, IntPtr.Zero, 2 /* LARGE_FETCH */);
+            if (h == Invalid) return;
             try
             {
-                if ((d.Attributes & FileAttributes.ReparsePoint) != 0) return false;   // never follow links
-                if (SkipNames.Contains(d.Name)) return false;
-                if (d.FullName.TrimEnd('\\').Equals(Win, StringComparison.OrdinalIgnoreCase)) return false;
-                return true;
+                do
+                {
+                    string n = d.Name; if (n == "." || n == "..") continue;
+                    if ((d.Attr & FileAttributes.ReparsePoint) != 0) continue;   // never follow links (and skip cloud placeholders' link points)
+                    if (SkipNames.Contains(n)) continue;
+                    string full = dir + "\\" + n;
+                    if ((d.Attr & FileAttributes.Directory) != 0)
+                    {
+                        if (full.Equals(Win, StringComparison.OrdinalIgnoreCase)) continue;
+                        Interlocked.Increment(ref pending); queue.Enqueue(full);
+                        continue;
+                    }
+                    Interlocked.Increment(ref Checked);
+                    long size = ((long)d.SizeHigh << 32) | d.SizeLow;
+                    if (size < min) continue;
+                    string kind = KindOf(full);
+                    found.Add(new LargeFile
+                    {
+                        Path = full, Name = n, Folder = dir, Size = size, Kind = kind, IsApp = kind == "Game files" || kind == "App or system file",
+                        Modified = DateTime.FromFileTime(((long)d.WriteHigh << 32) | d.WriteLow)
+                    });
+                } while (FindNextFileW(h, out d));
             }
-            catch { return false; }
-        }
-
-        void Walk(DirectoryInfo top, long min, ConcurrentBag<LargeFile> found, CancellationToken ct)
-        {
-            var stack = new Stack<DirectoryInfo>(); stack.Push(top);
-            while (stack.Count > 0)
-            {
-                if (ct.IsCancellationRequested) return;
-                var dir = stack.Pop(); Current = dir.FullName;
-                try { foreach (var d in dir.EnumerateDirectories()) if (Walkable(d)) stack.Push(d); } catch { }
-                try { foreach (var f in dir.EnumerateFiles()) Consider(f, min, found); } catch { }
-            }
-        }
-
-        void Consider(FileInfo f, long min, ConcurrentBag<LargeFile> found)
-        {
-            Interlocked.Increment(ref Checked);
-            try
-            {
-                if (f.Length < min || SkipNames.Contains(f.Name) || (f.Attributes & FileAttributes.ReparsePoint) != 0) return;
-                string kind = KindOf(f.FullName);
-                found.Add(new LargeFile { Path = f.FullName, Name = f.Name, Folder = f.DirectoryName, Size = f.Length, Modified = f.LastWriteTime, Kind = kind, IsApp = kind == "Game files" || kind == "App or system file" });
-            }
-            catch { }
+            finally { FindClose(h); }
         }
 
         /// <summary>"Video 12.3 GB · Disk image 4.1 GB · ..." biggest first.</summary>

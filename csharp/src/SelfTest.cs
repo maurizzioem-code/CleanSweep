@@ -213,7 +213,8 @@ namespace CleanSweep
                     Check(dash.DoAction.Enabled && dash.DoAction.Text == text, $"button not set for {f.Area}");
                     int before = Shell.TestOpened.Count; var page = form.Current;
                     dash.DoAction.PerformClick(); Pump(50);
-                    string what = Shell.TestOpened.Count > before ? "opens " + Shell.TestOpened.Last() : form.Current != page ? "shows page " + form.Current.Title : "(nothing)";
+                    string what = Shell.TestOpened.Count > before ? "opens " + Shell.TestOpened.Last() : form.Current != page ? "shows page " + form.Current.Title : dash.ScheduleForm != null ? "opens the schedule settings" : "(nothing)";
+                    dash.ScheduleForm?.Close();
                     Note($"    {f.Area}: '{text}' {what}");
                     if (what == "(nothing)" && action != "battery") Fail($"{f.Area}: action did nothing");
                     form.ShowPage(dash); Pump(50);
@@ -491,7 +492,7 @@ namespace CleanSweep
 
             // ---------------------------------------------------------------- large files
             var lf = form.Page<LargeFilesPage>();
-            string lroot = Path.Combine(CleanEngine.MyTemp, "CleanSweepLargeTest"), lout = Path.Combine(Environment.GetEnvironmentVariable("PUBLIC"), "CleanSweepLargeOutside");
+            string lroot = Path.Combine(Environment.GetEnvironmentVariable("PUBLIC"), "CleanSweepLargeTest"), lout = Path.Combine(Environment.GetEnvironmentVariable("PUBLIC"), "CleanSweepLargeOutside");
             await Step("Large files: finds big files, never follows links", async () =>
             {
                 form.ShowPage(lf); Pump(100);
@@ -542,7 +543,7 @@ namespace CleanSweep
                 else
                 {
                     Note("    " + lf.Summary.Text);
-                    foreach (var x in lf.Visible.Take(8)) Note($"      {Fmt.Size(x.Size),10}  {x.Kind,-12} {x.Path}");
+                    foreach (var x in lf.ShownFiles.Take(8)) Note($"      {Fmt.Size(x.Size),10}  {x.Kind,-12} {x.Path}");
                     Check(lf.Status.Text.StartsWith("Found") || lf.Status.Text.StartsWith("No files"), "search did not finish");
                 }
             });

@@ -112,11 +112,11 @@ namespace CleanSweep.Pages
             ShowList();
         }
 
-        public IEnumerable<LargeFile> Visible => Found.Where(f => !HideApps.Checked || !f.IsApp);
+        public IEnumerable<LargeFile> ShownFiles => Found.Where(f => !HideApps.Checked || !f.IsApp);
 
         public void ShowList()
         {
-            var rows = Visible;
+            var rows = ShownFiles;
             Func<LargeFile, object> key = sortCol == 1 ? f => f.Name : sortCol == 2 ? f => f.Kind : sortCol == 3 ? f => f.Modified : sortCol == 4 ? (Func<LargeFile, object>)(f => f.Folder) : f => f.Size;
             rows = (sortDesc ? rows.OrderByDescending(key) : rows.OrderBy(key)).Take(500).ToList();
             List.BeginUpdate(); List.Items.Clear();

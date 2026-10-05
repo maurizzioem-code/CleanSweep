@@ -535,7 +535,7 @@ namespace CleanSweep
                 var ui = new System.Windows.Forms.Timer { Interval = 100 }; ui.Tick += (s2, e2) => ticks++; ui.Start();
                 while (!t.IsCompleted && sw.ElapsedMilliseconds < 90000) { Pump(200); await Task.Delay(1); }
                 bool cancelled = false;
-                if (!t.IsCompleted) { Note("    still searching after 90 s - testing Cancel"); lf.Stop.PerformClick(); cancelled = true; }
+                if (!t.IsCompleted) { Note($"    still searching after 90 s ({Fmt.Count(lf.Found.Count)} found so far) - testing Cancel"); lf.Stop.PerformClick(); cancelled = true; }
                 await t; ui.Stop();
                 Note($"    {lf.Status.Text}  (UI timer ticked {ticks} times in {sw.Elapsed.TotalSeconds:0} s)");
                 Check(ticks > sw.ElapsedMilliseconds / 400, "window froze while searching");
@@ -545,6 +545,9 @@ namespace CleanSweep
                     Note("    " + lf.Summary.Text);
                     foreach (var x in lf.ShownFiles.Take(8)) Note($"      {Fmt.Size(x.Size),10}  {x.Kind,-12} {x.Path}");
                     Check(lf.Status.Text.StartsWith("Found") || lf.Status.Text.StartsWith("No files"), "search did not finish");
+                    long disk = new DriveInfo(AppPaths.SystemDrive).TotalSize;
+                    Check(lf.Found.All(x => x.Size <= disk && File.Exists(x.Path)), "file sizes or names are wrong");
+                    Check(lf.Found.Count == 0 || lf.Found.Any(x => x.Folder.Length > 3), "did not look inside folders");
                 }
             });
             Shot("large-files");

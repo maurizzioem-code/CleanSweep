@@ -61,7 +61,8 @@ namespace CleanSweep.Engine
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         struct FindData
         {
-            public FileAttributes Attr; public long Created, Accessed; public uint WriteLow, WriteHigh, SizeHigh, SizeLow, Reserved0, Reserved1;
+            // FILETIMEs are two DWORDs (4-byte aligned) - a long here would shift every field after it
+            public FileAttributes Attr; public uint CreatedLow, CreatedHigh, AccessedLow, AccessedHigh, WriteLow, WriteHigh, SizeHigh, SizeLow, Reserved0, Reserved1;
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string Name;
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)] public string Alt;
         }

@@ -772,7 +772,7 @@ namespace CleanSweep
             await Step("Registry: finds leftovers from removed programs", async () =>
             {
                 form.ShowPage(rg); Pump(100);
-                using (var k = Registry.CurrentUser.OpenSubKey(runKey, true)) k.SetValue("CleanSweepSelfTest", "\"C:\\Program Files\\CleanSweepGoneApp\\gone.exe\" /background");
+                using (var k = Registry.CurrentUser.CreateSubKey(runKey)) k.SetValue("CleanSweepSelfTest", "\"C:\\Program Files\\CleanSweepGoneApp\\gone.exe\" /background");
                 using (var k = Registry.CurrentUser.CreateSubKey(upKey)) { k.SetValue("DisplayName", "CleanSweep Test App (removed)"); k.SetValue("UninstallString", "C:\\Program Files\\CleanSweepGoneApp\\uninstall.exe"); }
                 var sw = Stopwatch.StartNew(); await rg.ScanAsync();
                 Note($"    {sw.Elapsed.TotalSeconds:0.0}s: {rg.Status.Text}");
@@ -788,7 +788,7 @@ namespace CleanSweep
             {
                 rg.RestorePt.Checked = false; await rg.CleanAsync();
                 Note("    " + rg.Status.Text + "  backup: " + Path.GetFileName(rg.LastBackup));
-                using (var k = Registry.CurrentUser.OpenSubKey(runKey)) Check(k.GetValue("CleanSweepSelfTest") == null, "startup entry not removed");
+                using (var k = Registry.CurrentUser.OpenSubKey(runKey)) Check(k?.GetValue("CleanSweepSelfTest") == null, "startup entry not removed");
                 using (var k = Registry.CurrentUser.OpenSubKey(upKey)) Check(k == null, "uninstall entry not removed");
                 Check(rg.LastBackup != null && File.ReadAllText(rg.LastBackup).Contains("CleanSweepSelfTest"), "backup missing the removed entries");
                 rg.TestRestoreFile = rg.LastBackup; rg.RestoreBackup.PerformClick(); rg.TestRestoreFile = null; Pump(100);
@@ -796,7 +796,7 @@ namespace CleanSweep
                 Note("    restored from backup: " + rg.Status.Text);
             });
             Shot("registry");
-            try { using (var k = Registry.CurrentUser.OpenSubKey(runKey, true)) k.DeleteValue("CleanSweepSelfTest", false); Registry.CurrentUser.DeleteSubKeyTree(upKey, false); } catch { }
+            try { using (var k = Registry.CurrentUser.OpenSubKey(runKey, true)) k?.DeleteValue("CleanSweepSelfTest", false); Registry.CurrentUser.DeleteSubKeyTree(upKey, false); } catch { }
             RegistryScan.BackupDir = realBackups;
 
             // ---------------------------------------------------------------- network
@@ -809,7 +809,7 @@ namespace CleanSweep
                 foreach (var l in np.Info.Text.Split('\n')) Note("    | " + l);
                 Check(np.Kind.Text == Network.ActiveKind(), "page should start on the connection Windows uses");
                 Check(np.Info.Text.Length > 10 && !np.Info.Text.StartsWith("Reading"), "no connection details");
-                Check(np.List.Items.Count == 5, "expected 5 fixes");
+                Check(np.List.Items.Count == 6, "expected 6 fixes, found " + np.List.Items.Count);
                 var ticked = np.List.CheckedItems.Cast<ListViewItem>().Select(i => (string)i.Tag).ToList();
                 Check(!ticked.Contains("stack") && !ticked.Contains("wifi-power") && !ticked.Contains("eth-power"), "deep or optional fixes must not be ticked by default");
             });

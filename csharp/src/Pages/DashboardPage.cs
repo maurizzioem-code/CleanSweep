@@ -301,6 +301,11 @@ namespace CleanSweep.Pages
                     if (names.Length > 0 && Msg.Confirm($"Optimize {names}?\n\nWindows trims SSDs and defragments hard drives - the same thing its weekly maintenance does.", "CleanSweep"))
                         await dv.RunTool("optimize");
                     break;
+                case "network":
+                    var np = Program.Form.Page<NetworkPage>(); if (np == null || np.Busy) return;
+                    Program.Form.ShowPage(np); await np.TestAsync();
+                    tile.Sub = np.Before != null ? (np.Before.Ping != null ? $"Ping {np.Before.Ping} ms, DNS {(np.Before.Dns?.ToString() ?? "-")} ms" : "No internet response") : tile.DefaultSub;
+                    break;
                 case "restore":
                     tile.Sub = "Creating restore point..."; var f = FindForm(); if (f != null) f.Cursor = Cursors.WaitCursor;
                     bool ok = await Task.Run(() => RestorePoint.Create("CleanSweep - manual restore point"));
@@ -315,7 +320,7 @@ namespace CleanSweep.Pages
         public void UpdateTileAvailability()
         {
             var have = new HashSet<string>(Program.Form?.Pages.Select(p => p.Title) ?? Enumerable.Empty<string>());
-            var needs = new Dictionary<string, string> { ["clean"] = "Cleanup", ["space"] = "Large files", ["repair"] = "Repair", ["optimize"] = "Drives", ["network"] = "Network Optimizer" };
+            var needs = new Dictionary<string, string> { ["clean"] = "Cleanup", ["space"] = "Large files", ["repair"] = "Repair", ["optimize"] = "Drives", ["network"] = "Network" };
             foreach (var t in Tiles.Values)
             {
                 bool ok = !needs.TryGetValue(t.Key, out var page) || have.Contains(page);

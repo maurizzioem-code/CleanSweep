@@ -43,7 +43,7 @@ namespace CleanSweep
                 Settings.Load();
                 Form = new MainForm();
                 var dash = new DashboardPage();
-                Form.Build(new Page[] { dash, new CleanupPage(), new LargeFilesPage(), new DrivesPage(), new RepairPage(), new AboutPage() });
+                Form.Build(new Page[] { dash, new CleanupPage(), new LargeFilesPage(), new DrivesPage(), new RepairPage(), new ShortcutsPage(), new NetworkPage(), new RegistryPage(), new AboutPage() });
                 Form.FormClosing += (s, e) =>
                 {
                     if (!Pages.ToolLock.Busy || Msg.Test || e.CloseReason != CloseReason.UserClosing) return;

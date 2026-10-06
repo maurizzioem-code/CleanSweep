@@ -304,8 +304,8 @@ namespace CleanSweep.Engine
         static IEnumerable<Finding> Internet()
         {
             int? ms = PingMs("1.1.1.1") ?? PingMs("1.1.1.1", true);
-            if (ms == null) yield return new Finding("Internet", Status.Problem, "No internet connection", "Check Wi-Fi or the cable, then use the Network Optimizer tab.", "page:Network Optimizer", "Open Network Optimizer").Fallback("settings:ms-settings:network-status", "Open Network settings");
-            else if (ms > 100) yield return new Finding("Internet", Status.Warning, $"Slow response: {ms} ms", "Run a connection test in the Network Optimizer tab.", "page:Network Optimizer", "Open Network Optimizer").Fallback("settings:ms-settings:network-status", "Open Network settings");
+            if (ms == null) yield return new Finding("Internet", Status.Problem, "No internet connection", "Check Wi-Fi or the cable, then run a connection test on the Network page.", "page:Network", "Open Network").Fallback("settings:ms-settings:network-status", "Open Network settings");
+            else if (ms > 100) yield return new Finding("Internet", Status.Warning, $"Slow response: {ms} ms", "Run a connection test on the Network page.", "page:Network", "Open Network").Fallback("settings:ms-settings:network-status", "Open Network settings");
             else yield return new Finding("Internet", Status.OK, $"Connected ({ms} ms)");
         }
 

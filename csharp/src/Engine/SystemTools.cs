@@ -100,6 +100,32 @@ namespace CleanSweep.Engine
         }
     }
 
+    /// <summary>Short Windows commands (netsh, ipconfig, reg, powercfg...) run hidden; returns exit code and output.</summary>
+    public static class Cmd
+    {
+        public static (int Code, string Out) Run(string exe, string args, int timeoutMs = 60000)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo(exe.Contains("\\") ? exe : ConsoleTool.SysExe(exe), args)
+                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+                try { psi.StandardOutputEncoding = Encoding.GetEncoding(System.Globalization.CultureInfo.CurrentCulture.TextInfo.OEMCodePage); } catch { }
+                using (var p = Process.Start(psi))
+                {
+                    var err = p.StandardError.ReadToEndAsync(); var o = p.StandardOutput.ReadToEnd();
+                    if (!p.WaitForExit(timeoutMs)) { try { p.Kill(); } catch { } return (-1, o); }
+                    Trace.Write($"cmd: {exe} {args} -> {p.ExitCode}");
+                    return (p.ExitCode, o + err.Result);
+                }
+            }
+            catch (Exception e) { return (-1, e.Message); }
+        }
+        /// <summary>Windows PowerShell for the few things only its cmdlets expose (network adapter advanced properties).</summary>
+        public static (int Code, string Out) PowerShell(string script, int timeoutMs = 60000) =>
+            Run(ConsoleTool.SysExe(@"WindowsPowerShell\v1.0\powershell.exe"),
+                "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + Convert.ToBase64String(Encoding.Unicode.GetBytes("$ProgressPreference='SilentlyContinue'; " + script)), timeoutMs);
+    }
+
     public enum ToolKind { Check, Repair, Undo, Cleanup }
     public class RepairTool
     {

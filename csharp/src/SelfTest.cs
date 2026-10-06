@@ -260,7 +260,7 @@ namespace CleanSweep
                     form.ShowPage(dash); Pump(50);
                 }
                 // pages that aren't in this edition yet fall back to Windows' own settings
-                var net = new Finding("Internet", Engine.Status.Problem, "x", "", "page:Network Optimizer", "Open Network Optimizer").Fallback("settings:ms-settings:network-status", "Open Network settings");
+                var net = new Finding("Internet", Engine.Status.Problem, "x", "", "page:Not Yet Built", "Open it").Fallback("settings:ms-settings:network-status", "Open Network settings");
                 Check(dash.Resolve(net).Action == "settings:ms-settings:network-status", "fallback not used for a missing page");
                 var clean = new Finding("Junk files", Engine.Status.Warning, "x", "", "page:Cleanup", "Open Cleanup");
                 dash.RunAction(clean); Pump(50); Check(form.Current is CleanupPage, "page action did not open Cleanup"); form.ShowPage(dash);
@@ -270,8 +270,7 @@ namespace CleanSweep
             {
                 foreach (var t in dash.Tiles.Values) Note($"    {t.Title}: {(t.Available ? "ready" : "later phase")} - {t.Sub}");
                 Check(dash.Tiles["clean"].Available && dash.Tiles["restore"].Available, "Quick clean / Restore point should work");
-                Check(!dash.Tiles["network"].Available, "Network tile should wait for its page");
-                int m = Msg.Log.Count; await dash.QuickAction("network"); Check(Msg.Log.Count == m + 1, "unavailable tile gave no message");
+                Check(dash.Tiles.Values.All(t => t.Available), "all one-click tiles should work now: " + string.Join(", ", dash.Tiles.Values.Where(t => !t.Available).Select(t => t.Title)));
                 await dash.QuickAction("restore"); Note("    Restore point: " + dash.Tiles["restore"].Sub + "  (" + RestorePoint.LastResult + ")");
             });
 
@@ -727,8 +726,133 @@ namespace CleanSweep
                 Check(dash.Tiles["repair"].Available && dash.Tiles["optimize"].Available, "tiles should be available now");
                 var f = new Finding("Stability", Engine.Status.Problem, "x", "", "page:Repair", "Open Repair tools");
                 dash.RunAction(f); Pump(50); Check(form.Current is RepairPage, "did not open Repair"); form.ShowPage(dash);
-                Check(!dash.Tiles["network"].Available, "Network is still a later phase");
+
             });
+
+            // ---------------------------------------------------------------- shortcuts
+            var sp = form.Page<ShortcutsPage>();
+            string scRoot = Path.Combine(Environment.GetEnvironmentVariable("PUBLIC"), "CleanSweepShortcutTest");
+            await Step("Shortcuts: finds only broken shortcuts", async () =>
+            {
+                form.ShowPage(sp); Pump(100); Reset(scRoot);
+                string target = Path.Combine(scRoot, "real.txt"); File.WriteAllText(target, "x");
+                Shortcuts.Create(Path.Combine(scRoot, "Works.lnk"), target);
+                Shortcuts.Create(Path.Combine(scRoot, "Broken.lnk"), Path.Combine(scRoot, @"gone\OldApp.exe"));
+                Directory.CreateDirectory(Path.Combine(scRoot, "Sub")); Shortcuts.Create(Path.Combine(scRoot, @"Sub\Broken too.lnk"), Path.Combine(scRoot, "deleted.docx"));
+                Shortcuts.Create(Path.Combine(scRoot, "Network.lnk"), @"\\nas\share\file.txt");
+                Shortcuts.Create(Path.Combine(scRoot, "Unplugged.lnk"), @"Q:\Games\game.exe");
+                var real = sp.Dirs; sp.Dirs = new List<string> { scRoot };
+                await sp.ScanAsync(); sp.Dirs = real;
+                Note("    " + sp.Status.Text + "  " + string.Join(" | ", sp.Found.Select(b => b.Name + " -> " + b.Target)));
+                Check(sp.Found.Count == 2 && sp.Found.Any(b => b.Name == "Broken") && sp.Found.Any(b => b.Name == "Broken too"), "expected exactly the 2 broken shortcuts");
+                Check(sp.List.CheckedItems.Count == 2, "broken shortcuts should be ticked");
+            });
+            await Step("Shortcuts: Move ticked to Recycle Bin", () =>
+            {
+                string p1 = Path.Combine(scRoot, "Broken.lnk"); sp.RemoveTicked(); Pump(50);
+                Note("    " + sp.Status.Text);
+                Check(!File.Exists(p1) && File.Exists(Path.Combine(scRoot, "Works.lnk")), "wrong shortcuts removed");
+                foreach (var f in new[] { p1, Path.Combine(scRoot, @"Sub\Broken too.lnk") }) PurgeFromRecycleBin(f);
+            });
+            await Step("Shortcuts: real scan of Desktop and Start menu", async () =>
+            {
+                var sw = Stopwatch.StartNew(); await sp.ScanAsync();
+                Note($"    {sw.Elapsed.TotalSeconds:0.0}s: {sp.Status.Text}");
+                foreach (var b in sp.Found.Take(10)) Note($"      {b.Name}  ->  {b.Target}");
+                Check(sp.Status.Text.StartsWith("Found") || sp.Status.Text.StartsWith("No broken"), "scan did not finish");
+                foreach (ListViewItem i in sp.List.Items) i.Checked = false;   // the test never removes the user's own shortcuts
+            });
+            Shot("shortcuts");
+            try { Directory.Delete(scRoot, true); } catch { }
+
+            // ---------------------------------------------------------------- registry
+            var rg = form.Page<RegistryPage>();
+            string runKey = @"Software\Microsoft\Windows\CurrentVersion\Run", upKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\CleanSweepSelfTest";
+            string realBackups = RegistryScan.BackupDir; RegistryScan.BackupDir = Path.Combine(outDir, "registry-backups");
+            await Step("Registry: finds leftovers from removed programs", async () =>
+            {
+                form.ShowPage(rg); Pump(100);
+                using (var k = Registry.CurrentUser.OpenSubKey(runKey, true)) k.SetValue("CleanSweepSelfTest", "\"C:\\Program Files\\CleanSweepGoneApp\\gone.exe\" /background");
+                using (var k = Registry.CurrentUser.CreateSubKey(upKey)) { k.SetValue("DisplayName", "CleanSweep Test App (removed)"); k.SetValue("UninstallString", "C:\\Program Files\\CleanSweepGoneApp\\uninstall.exe"); }
+                var sw = Stopwatch.StartNew(); await rg.ScanAsync();
+                Note($"    {sw.Elapsed.TotalSeconds:0.0}s: {rg.Status.Text}");
+                foreach (var f in rg.Found.Take(12)) Note($"      [{(f.Recommended ? "x" : " ")}] {f.Issue}  {f.Location}");
+                Check(rg.Found.Any(f => f.Value == "CleanSweepSelfTest" && f.Recommended), "test startup entry not found");
+                Check(rg.Found.Any(f => f.Key.EndsWith("CleanSweepSelfTest") && f.Issue.Contains("CleanSweep Test App")), "test uninstall entry not found");
+                Check(rg.Found.Where(f => f.Issue.Contains("no benefit")).All(f => !f.Recommended), "no-benefit entries must not be ticked");
+                // the test only ever removes its own entries
+                foreach (ListViewItem i in rg.List.Items) i.Checked = ((RegIssue)i.Tag).Location.Contains("CleanSweepSelfTest");
+                Check(rg.List.CheckedItems.Count == 2, "expected 2 ticked test entries");
+            });
+            await Step("Registry: backup, remove, restore", async () =>
+            {
+                rg.RestorePt.Checked = false; await rg.CleanAsync();
+                Note("    " + rg.Status.Text + "  backup: " + Path.GetFileName(rg.LastBackup));
+                using (var k = Registry.CurrentUser.OpenSubKey(runKey)) Check(k.GetValue("CleanSweepSelfTest") == null, "startup entry not removed");
+                using (var k = Registry.CurrentUser.OpenSubKey(upKey)) Check(k == null, "uninstall entry not removed");
+                Check(rg.LastBackup != null && File.ReadAllText(rg.LastBackup).Contains("CleanSweepSelfTest"), "backup missing the removed entries");
+                rg.TestRestoreFile = rg.LastBackup; rg.RestoreBackup.PerformClick(); rg.TestRestoreFile = null; Pump(100);
+                using (var k = Registry.CurrentUser.OpenSubKey(upKey)) Check(k != null && (string)k.GetValue("DisplayName") == "CleanSweep Test App (removed)", "restore did not put the entry back");
+                Note("    restored from backup: " + rg.Status.Text);
+            });
+            Shot("registry");
+            try { using (var k = Registry.CurrentUser.OpenSubKey(runKey, true)) k.DeleteValue("CleanSweepSelfTest", false); Registry.CurrentUser.DeleteSubKeyTree(upKey, false); } catch { }
+            RegistryScan.BackupDir = realBackups;
+
+            // ---------------------------------------------------------------- network
+            var np = form.Page<NetworkPage>();
+            await Step("Network: adapters and details", () =>
+            {
+                form.ShowPage(np); Pump(200);
+                foreach (var a in Network.Adapters()) Note($"    {(a.Up ? "up  " : "down")} {(a.Wireless ? "Wi-Fi   " : "wired   ")} {a.Name} - {a.Description} ({Network.SpeedText(a.Speed)}){(a.Gateway != null ? " gw " + a.Gateway : "")}");
+                Note($"    active: {Network.ActiveKind()}  page: {np.Kind.Text}");
+                foreach (var l in np.Info.Text.Split('\n')) Note("    | " + l);
+                Check(np.Kind.Text == Network.ActiveKind(), "page should start on the connection Windows uses");
+                Check(np.Info.Text.Length > 10 && !np.Info.Text.StartsWith("Reading"), "no connection details");
+                Check(np.List.Items.Count == 5, "expected 5 fixes");
+                var ticked = np.List.CheckedItems.Cast<ListViewItem>().Select(i => (string)i.Tag).ToList();
+                Check(!ticked.Contains("stack") && !ticked.Contains("wifi-power") && !ticked.Contains("eth-power"), "deep or optional fixes must not be ticked by default");
+            });
+            await Step("Network: connection test", async () =>
+            {
+                var sw = Stopwatch.StartNew(); await np.TestAsync();
+                Note($"    {sw.Elapsed.TotalSeconds:0.0}s: {np.Status.Text}");
+                Check(np.Before != null && np.Before.Ping != null && np.Before.Ping < 1000, "no internet response");
+                Check(np.Before.Dns != null, "DNS lookup failed");
+            });
+            await Step("Network: fixes run in a safe order (dry run - connection not touched)", async () =>
+            {
+                Network.DryRun = new List<string>();
+                foreach (ListViewItem i in np.List.Items) i.Checked = true; np.DnsBox.SelectedIndex = 1;
+                await np.ApplyAsync(); var cmds = Network.DryRun; Network.DryRun = null; np.DnsBox.SelectedIndex = 0; np.LoadOptions();
+                foreach (var c in cmds) Note("      " + (c.Length > 150 ? c.Substring(0, 150) + "..." : c));
+                Note("    " + np.Status.Text);
+                Check(cmds.Any(c => c.Contains("/flushdns")) && cmds.Any(c => c.Contains("autotuninglevel=normal")) && cmds.Any(c => c.Contains("winsock reset")), "commands missing");
+                Check(!cmds.Any(c => System.Text.RegularExpressions.Regex.IsMatch(c, "autotuninglevel=(disabled|highlyrestricted|experimental)|chimney|rss=|congestionprovider|TcpAckFrequency|Nagle", System.Text.RegularExpressions.RegexOptions.IgnoreCase)), "no 'gaming' TCP tweaks allowed");
+                int renew = cmds.FindIndex(c => c.Contains("/renew")), dns = cmds.FindIndex(c => c.Contains("Set-DnsClientServerAddress"));
+                Check(dns >= 0 && renew > dns, "DNS should be set before renewing the address");
+                Check(np.After != null, "no after-test");
+            });
+            await Step("Network: Wi-Fi and Ethernet parsing", () =>
+            {
+                var nets = Network.ParseNearby("SSID 1 : Home\r\n    Network type : Infrastructure\r\n    BSSID 1 : aa:bb\r\n         Signal : 88%\r\n         Band : 5 GHz\r\n         Channel : 36\r\n    BSSID 2 : cc:dd\r\n         Signal : 40%\r\n         Channel : 6\r\nSSID 2 : \r\n    BSSID 1 : ee:ff\r\n         Signal : 20%\r\n         Channel : 6\r\n");
+                Check(nets.Count == 3 && nets[0].Channel == 36 && nets[0].Band == "5 GHz" && nets[2].Ssid == "(hidden)", "nearby networks not read");
+                var d = Network.ParseColon("    SSID                   : Home\r\n    Signal                 : 91%\r\n    Receive rate (Mbps)    : 866.7\r\n");
+                Check(d["SSID"] == "Home" && d["Receive rate (Mbps)"] == "866.7", "Wi-Fi details not read");
+                Check(Network.NeedsLocation("Network shell commands need location permission to access WLAN information."), "location prompt not detected");
+            });
+            if (Network.Ethernet()?.Up == true)
+                await Step("Network: Ethernet diagnostics (read-only)", async () =>
+                {
+                    np.Kind.SelectedItem = "Ethernet"; Pump(100);
+                    var sw = Stopwatch.StartNew(); await np.DiagnoseAsync();
+                    Note($"    {sw.Elapsed.TotalSeconds:0}s: {np.Status.Text}");
+                    foreach (var r in np.LastDiag) Note($"      [{r.Status}] {r.Area}: {r.Result}");
+                    Check(np.LastDiag.Count >= 8, "diagnostics incomplete");
+                    if (np.OpenDialog != null) { Shot("network-diagnostics", np.OpenDialog); np.OpenDialog.Close(); }
+                    np.Kind.SelectedItem = Network.ActiveKind();
+                });
+            Shot("network");
 
             await Step("Messages asked during the test", () => { foreach (var m in Msg.Log) Note("  " + m); foreach (var o in Shell.TestOpened) Note("  [would open] " + o); });
             form.ShowPage(cl); Shot("cleanup-final");

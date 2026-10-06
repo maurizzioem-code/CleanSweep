@@ -17,6 +17,12 @@ What the test does on your PC:
 - Briefly creates the "CleanSweep\Automatic cleanup" scheduled task, runs it once
   (it only removes junk older than a day), then puts your own schedule back - or
   removes the task if you didn't have one.
+- Drives and Repair: optimizes C: with Windows' own tool (the same TRIM Windows does
+  every week), starts a chkdsk scan and a DISM scan and cancels them after a few seconds,
+  and runs the read-only DISM health check (about a minute). It may create a System
+  Restore point named "CleanSweep - before system repair". The Windows Update repair is
+  tested on stand-in folders only - your real update files and services are not touched.
+- The test window stays open until the test is finished, even if you click X.
 - Creates a few large empty test files in C:\Users\Public, moves one to the Recycle Bin
   and removes it from there again, then deletes the rest. It also searches C: for
   large files for up to 90 seconds (it only reads, nothing is changed).

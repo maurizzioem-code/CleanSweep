@@ -102,7 +102,7 @@ namespace CleanSweep.Pages
 
         public RegistryPage() : base("Registry", Glyph.Registry)
         {
-            List.AddColumns(("Issue", 290), ("Registry location", 400), ("Missing file", 300));
+            List.AddColumns(("Issue", 330), ("Missing file", 380), ("Registry location", 520));
             var opts = Ui.Row(DockStyle.Top, 2); opts.Controls.Add(RestorePt);
             var bar = Ui.Row(DockStyle.Top, 6); bar.Controls.AddRange(new Control[] { Scan, Clean, Stop, RestoreBackup, OpenBackups });
             Ui.Stack(this, Status, help, opts, bar, Ui.Spacer(4), List);
@@ -135,7 +135,7 @@ namespace CleanSweep.Pages
             foreach (var f in Found.OrderByDescending(f => f.Recommended))
             {
                 var it = new ListViewItem(f.Issue) { Tag = f, Checked = f.Recommended, ForeColor = f.Recommended ? Theme.Text : Theme.Sub, UseItemStyleForSubItems = true, ToolTipText = f.Location };
-                it.SubItems.Add(f.Location); it.SubItems.Add(f.Target ?? ""); List.Items.Add(it);
+                it.SubItems.Add(f.Target ?? ""); it.SubItems.Add(f.Location); List.Items.Add(it);
             }
             List.EndUpdate(); Clean.Enabled = List.CheckedItems.Count > 0;
         }
@@ -157,14 +157,14 @@ namespace CleanSweep.Pages
                 }
                 Status.Text = "Backing up...";
                 var items = sel.Select(i => (RegIssue)i.Tag).ToList();
-                try { LastBackup = await Task.Run(() => RegistryScan.Backup(items.Select(i => i.Key))); }
+                try { LastBackup = await Task.Run(() => RegistryScan.Backup(items)); }
                 catch (Exception e) { Status.Text = "Nothing was removed: " + e.Message + "."; return; }
                 int ok = 0;
                 foreach (var it in sel)
                 {
                     var f = (RegIssue)it.Tag;
                     try { RegistryScan.Remove(f); List.Items.Remove(it); Found.Remove(f); ok++; }
-                    catch (Exception e) { it.SubItems[2].Text = "Could not remove: " + (e is UnauthorizedAccessException || e is System.Security.SecurityException ? "access denied" : e.Message); }
+                    catch (Exception e) { it.SubItems[1].Text = "Could not remove: " + (e is UnauthorizedAccessException || e is System.Security.SecurityException ? "access denied" : e.Message); }
                 }
                 Status.Text = $"Removed {Fmt.Count(ok, "entry", "entries")}. Backup saved.";
                 Msg.Show($"Removed {Fmt.Count(ok, "registry entry", "registry entries")}.\n\nBackup file:\n{LastBackup}" + (rp ? "\n\nA System Restore point named 'CleanSweep - before registry cleaning' was created." : ""), "CleanSweep", MessageBoxButtons.OK, MessageBoxIcon.Information);

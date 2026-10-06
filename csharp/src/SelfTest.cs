@@ -776,7 +776,7 @@ namespace CleanSweep
                 using (var k = Registry.CurrentUser.CreateSubKey(upKey)) { k.SetValue("DisplayName", "CleanSweep Test App (removed)"); k.SetValue("UninstallString", "C:\\Program Files\\CleanSweepGoneApp\\uninstall.exe"); }
                 var sw = Stopwatch.StartNew(); await rg.ScanAsync();
                 Note($"    {sw.Elapsed.TotalSeconds:0.0}s: {rg.Status.Text}");
-                foreach (var f in rg.Found.Take(12)) Note($"      [{(f.Recommended ? "x" : " ")}] {f.Issue}  {f.Location}");
+                foreach (var f in rg.Found.OrderByDescending(f => f.Recommended).Take(12)) Note($"      [{(f.Recommended ? "x" : " ")}] {f.Issue}  {f.Location}  ->  missing: {f.Target}");
                 Check(rg.Found.Any(f => f.Value == "CleanSweepSelfTest" && f.Recommended), "test startup entry not found");
                 Check(rg.Found.Any(f => f.Key.EndsWith("CleanSweepSelfTest") && f.Issue.Contains("CleanSweep Test App")), "test uninstall entry not found");
                 Check(rg.Found.Where(f => f.Issue.Contains("no benefit")).All(f => !f.Recommended), "no-benefit entries must not be ticked");
@@ -790,7 +790,10 @@ namespace CleanSweep
                 Note("    " + rg.Status.Text + "  backup: " + Path.GetFileName(rg.LastBackup));
                 using (var k = Registry.CurrentUser.OpenSubKey(runKey)) Check(k?.GetValue("CleanSweepSelfTest") == null, "startup entry not removed");
                 using (var k = Registry.CurrentUser.OpenSubKey(upKey)) Check(k == null, "uninstall entry not removed");
-                Check(rg.LastBackup != null && File.ReadAllText(rg.LastBackup).Contains("CleanSweepSelfTest"), "backup missing the removed entries");
+                var bak = rg.LastBackup != null ? File.ReadAllText(rg.LastBackup) : "";
+                Check(bak.Contains("\"CleanSweepSelfTest\"=") && bak.Contains(@"Uninstall\CleanSweepSelfTest]"), "backup missing the removed entries");
+                var others = bak.Split('\n').Where(l => l.StartsWith("\"") && !l.StartsWith("\"CleanSweepSelfTest\"") && !l.StartsWith("\"DisplayName\"") && !l.StartsWith("\"UninstallString\"")).ToList();
+                Check(others.Count == 0, "backup should only hold the removed entries, also has: " + string.Join(" ", others.Take(3)));
                 rg.TestRestoreFile = rg.LastBackup; rg.RestoreBackup.PerformClick(); rg.TestRestoreFile = null; Pump(100);
                 using (var k = Registry.CurrentUser.OpenSubKey(upKey)) Check(k != null && (string)k.GetValue("DisplayName") == "CleanSweep Test App (removed)", "restore did not put the entry back");
                 Note("    restored from backup: " + rg.Status.Text);

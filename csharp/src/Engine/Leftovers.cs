@@ -158,15 +158,24 @@ namespace CleanSweep.Engine
         }
 
         /// <summary>Exports every affected key to one .reg file (reg.exe's own format, so it can be imported again).</summary>
-        public static string Backup(IEnumerable<string> keys)
+        /// <summary>Saves a .reg file with only what will be removed: single values for startup entries, whole keys for the rest.</summary>
+        public static string Backup(IEnumerable<RegIssue> items)
         {
             Directory.CreateDirectory(BackupDir);
             string outFile = Path.Combine(BackupDir, "Registry backup " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss") + ".reg");
             var sb = new StringBuilder("Windows Registry Editor Version 5.00\r\n"); int ok = 0;
-            foreach (var k in keys.Distinct(StringComparer.OrdinalIgnoreCase))
+            var list = items.ToList();
+            foreach (var g in list.Where(i => i.Value != null).GroupBy(i => i.Key, StringComparer.OrdinalIgnoreCase))
+                using (var k = Open(g.Key))
+                {
+                    if (k == null) continue;
+                    sb.Append("\r\n[").Append(g.Key).Append("]\r\n");
+                    foreach (var i in g) { var line = RegLine(k, i.Value); if (line != null) { sb.Append(line).Append("\r\n"); ok++; } }
+                }
+            foreach (var key in list.Where(i => i.Value == null).Select(i => i.Key).Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 string tmp = Path.GetTempFileName();
-                var (code, _) = Cmd.Run("reg.exe", $"export \"{k}\" \"{tmp}\" /y /reg:64");
+                var (code, _) = Cmd.Run("reg.exe", $"export \"{key}\" \"{tmp}\" /y /reg:64");
                 if (code == 0) { foreach (var l in File.ReadAllLines(tmp, Encoding.Unicode).Skip(1)) sb.Append(l).Append("\r\n"); ok++; }
                 try { File.Delete(tmp); } catch { }
             }
@@ -174,6 +183,24 @@ namespace CleanSweep.Engine
             File.WriteAllText(outFile, sb.ToString(), Encoding.Unicode);
             return outFile;
         }
+        static string Esc(string v) => v.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        /// <summary>One value in .reg syntax (same format regedit writes).</summary>
+        static string RegLine(RegistryKey k, string name)
+        {
+            object v = k.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames); if (v == null) return null;
+            string n = name.Length == 0 ? "@" : "\"" + Esc(name) + "\"";
+            switch (k.GetValueKind(name))
+            {
+                case RegistryValueKind.String: return n + "=\"" + Esc((string)v) + "\"";
+                case RegistryValueKind.DWord: return n + "=dword:" + unchecked((uint)(int)v).ToString("x8");
+                case RegistryValueKind.ExpandString: return n + "=hex(2):" + Hex(Encoding.Unicode.GetBytes((string)v + "\0"));
+                case RegistryValueKind.MultiString: return n + "=hex(7):" + Hex(Encoding.Unicode.GetBytes(string.Join("\0", (string[])v) + "\0\0"));
+                case RegistryValueKind.QWord: return n + "=hex(b):" + Hex(BitConverter.GetBytes((long)v));
+                case RegistryValueKind.Binary: return n + "=hex:" + Hex((byte[])v);
+                default: return null;
+            }
+        }
+        static string Hex(byte[] b) => string.Join(",", b.Select(x => x.ToString("x2")));
         public static void Remove(RegIssue i)
         {
             if (i.Value != null) using (var k = Open(i.Key, true)) { if (k == null) return; k.DeleteValue(i.Value, false); }

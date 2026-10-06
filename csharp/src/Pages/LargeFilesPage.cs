@@ -41,7 +41,7 @@ namespace CleanSweep.Pages
         public LargeFilesPage() : base("Large files", Glyph.Space)
         {
             MinSize.SelectedIndex = 0; MinSize.Margin = new Padding(0, 3, 18, 0);
-            var opts = Ui.Row(); opts.Controls.AddRange(new Control[] { Ui.Text("Show files of at least"), MinSize, HideApps });
+            var opts = Ui.Row(); opts.Controls.AddRange(new Control[] { Ui.Pair(Ui.Text("Show files of at least"), MinSize), HideApps });
             var bar = Ui.Row(DockStyle.Top, 4); bar.Controls.AddRange(new Control[] { Search, Stop });
             var help = new Label
             {

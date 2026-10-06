@@ -27,6 +27,7 @@
     <Reference Include="System.Management" />
     <Reference Include="Microsoft.CSharp" />
     <Reference Include="System.Core" />
+    <Reference Include="System.ServiceProcess" />
     <EmbeddedResource Include="CleanSweep.ico" LogicalName="CleanSweep.ico" />
   </ItemGroup>
 </Project>

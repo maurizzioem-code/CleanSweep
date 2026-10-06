@@ -287,6 +287,20 @@ namespace CleanSweep.Pages
                     Program.Form.ShowPage(lf);
                     if (!lf.Busy && !lf.Searched) { foreach (var d in lf.Drives) d.Checked = ((string)d.Tag).StartsWith(AppPaths.SystemDrive, StringComparison.OrdinalIgnoreCase); await lf.SearchAsync(); }
                     break;
+                case "repair":
+                    var rp = Program.Form.Page<RepairPage>(); if (rp == null || rp.Busy || !ToolLock.Check()) return;
+                    Program.Form.ShowPage(rp); Application.DoEvents();
+                    if (Msg.Confirm("Recommended repair runs, in Microsoft's suggested order:\n\n1. Repair Windows image (DISM /RestoreHealth)\n2. System File Checker (sfc /scannow)\n\nIt usually takes 20-45 minutes. You can keep using your PC. Start now?", "CleanSweep"))
+                        await rp.Start(Repair.Recommended, "Recommended repair");
+                    break;
+                case "optimize":
+                    var dv = Program.Form.Page<DrivesPage>(); if (dv == null || dv.Busy || !ToolLock.Check()) return;
+                    Program.Form.ShowPage(dv);
+                    foreach (ListViewItem it in dv.List.Items) { var r = (DriveRow)it.Tag; it.Checked = r.Letter != null && (r.Media.StartsWith("SSD") || r.Media.StartsWith("HDD") || r.Media.StartsWith("Disk")); }
+                    var names = string.Join(", ", dv.Ticked.Select(r => r.Letter));
+                    if (names.Length > 0 && Msg.Confirm($"Optimize {names}?\n\nWindows trims SSDs and defragments hard drives - the same thing its weekly maintenance does.", "CleanSweep"))
+                        await dv.RunTool("optimize");
+                    break;
                 case "restore":
                     tile.Sub = "Creating restore point..."; var f = FindForm(); if (f != null) f.Cursor = Cursors.WaitCursor;
                     bool ok = await Task.Run(() => RestorePoint.Create("CleanSweep - manual restore point"));

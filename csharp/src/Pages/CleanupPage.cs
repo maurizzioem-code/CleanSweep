@@ -44,7 +44,7 @@ namespace CleanSweep.Pages
 
         public CleanupPage() : base("Cleanup", Glyph.Junk)
         {
-            options.Controls.AddRange(new Control[] { Ui.Text("Delete files older than"), Age, Ui.Text("Recycle Bin items older than"), Recycle, Ui.Text("If a file can't be deleted"), Mode });
+            options.Controls.AddRange(new Control[] { Ui.Pair(Ui.Text("Delete files older than"), Age), Ui.Pair(Ui.Text("Recycle Bin items older than"), Recycle), Ui.Pair(Ui.Text("If a file can't be deleted"), Mode) });
             Mode.Margin = new Padding(0, 3, 0, 0);
             List.AddColumns(("What to clean", 230), ("Files", 80), ("Size", 90), ("Skipped / note", 220), ("Folder", 380));
             var bar = Ui.Row(DockStyle.Top, 8); bar.Controls.AddRange(new Control[] { Scan, Clean, Stop, IgnoreBtn });

@@ -24,6 +24,7 @@ namespace CleanSweep
         static string outDir, logFile;
         static MainForm form;
         static int steps, failed;
+        static int closeAttempts;
         static AutoClean.TaskState taskBefore = new AutoClean.TaskState();
 
         public static int Run(MainForm f, string dir)
@@ -37,10 +38,20 @@ namespace CleanSweep
             string saved = null; try { if (File.Exists(Settings.FilePath)) saved = File.ReadAllText(Settings.FilePath); } catch { }
             // ...and the user's automatic cleanup task, if they have one
             taskBefore = AutoClean.State(); string taskXml = taskBefore.Exists ? taskBefore.Xml : null;
-            form.Shown += async (s, e) =>
+            // ...and the repair results list (the test runs a few read-only checks)
+            string repairSaved = null; try { if (File.Exists(Repair.ResultFile)) repairSaved = File.ReadAllText(Repair.ResultFile); } catch { }
+            bool done = false, restored = false;
+            // Clicking X (or Alt+F4) while the test runs would end it early - keep the window open until it's finished
+            form.FormClosing += (s, e) =>
             {
-                try { await RunAll(); }
-                catch (Exception ex) { Note("TEST HARNESS ERROR: " + ex); failed++; }
+                if (done || e.CloseReason != CloseReason.UserClosing) return;
+                e.Cancel = true; closeAttempts++;
+                if (closeAttempts == 1) Note("    (the window was asked to close during the test - it stays open until the test is finished)");
+            };
+            void Restore()
+            {
+                if (restored) return; restored = true;
+                try { if (repairSaved != null) File.WriteAllText(Repair.ResultFile, repairSaved, new System.Text.UTF8Encoding(true)); else if (File.Exists(Repair.ResultFile)) File.Delete(Repair.ResultFile); } catch { }
                 try
                 {
                     if (taskXml != null) AutoClean.RegisterXml(taskXml); else AutoClean.DeleteTaskOnly();
@@ -53,10 +64,23 @@ namespace CleanSweep
                     Settings.Load(); Note("Your settings were put back as they were before the test.");
                 }
                 catch (Exception ex) { Note("Could not put settings back: " + ex.Message); failed++; }
+            }
+            form.Shown += async (s, e) =>
+            {
+                try { await RunAll(); }
+                catch (Exception ex) { Note("TEST HARNESS ERROR: " + ex); failed++; }
+                Restore();
                 Note(""); Note($"{steps} steps, {failed} with issues");
-                form.Close();
+                done = true; form.Close();
             };
-            Application.Run(form);
+            try { Application.Run(form); }
+            catch (Exception ex) { Note("TEST HARNESS ERROR: " + ex); failed++; }
+            if (!done)
+            {
+                // the window went away before the test finished (Windows closed it, or the app crashed)
+                Restore(); failed++;
+                Note(""); Note($"TEST STOPPED EARLY after {steps} steps - the window was closed. {steps} steps, {failed} with issues");
+            }
             return failed;
         }
 
@@ -220,8 +244,8 @@ namespace CleanSweep
                     form.ShowPage(dash); Pump(50);
                 }
                 // pages that aren't in this edition yet fall back to Windows' own settings
-                var drives = new Finding("Storage", Engine.Status.Problem, "x", "", "page:Drives", "Free up space").Fallback("settings:ms-settings:storagesense", "Open Storage settings");
-                Check(dash.Resolve(drives).Action == "settings:ms-settings:storagesense", "fallback not used for a missing page");
+                var net = new Finding("Internet", Engine.Status.Problem, "x", "", "page:Network Optimizer", "Open Network Optimizer").Fallback("settings:ms-settings:network-status", "Open Network settings");
+                Check(dash.Resolve(net).Action == "settings:ms-settings:network-status", "fallback not used for a missing page");
                 var clean = new Finding("Junk files", Engine.Status.Warning, "x", "", "page:Cleanup", "Open Cleanup");
                 dash.RunAction(clean); Pump(50); Check(form.Current is CleanupPage, "page action did not open Cleanup"); form.ShowPage(dash);
             });
@@ -230,8 +254,8 @@ namespace CleanSweep
             {
                 foreach (var t in dash.Tiles.Values) Note($"    {t.Title}: {(t.Available ? "ready" : "later phase")} - {t.Sub}");
                 Check(dash.Tiles["clean"].Available && dash.Tiles["restore"].Available, "Quick clean / Restore point should work");
-                Check(!dash.Tiles["repair"].Available, "Repair tile should wait for its page");
-                int m = Msg.Log.Count; await dash.QuickAction("repair"); Check(Msg.Log.Count == m + 1, "unavailable tile gave no message");
+                Check(!dash.Tiles["network"].Available, "Network tile should wait for its page");
+                int m = Msg.Log.Count; await dash.QuickAction("network"); Check(Msg.Log.Count == m + 1, "unavailable tile gave no message");
                 await dash.QuickAction("restore"); Note("    Restore point: " + dash.Tiles["restore"].Sub + "  (" + RestorePoint.LastResult + ")");
             });
 
@@ -558,6 +582,133 @@ namespace CleanSweep
                 var storage = new Finding("Storage", Engine.Status.Problem, "x", "", "page:Large files", "Find large files").Fallback("settings:ms-settings:storagesense", "Open Storage settings");
                 Check(dash.Resolve(storage).Action == "page:Large files", "storage finding should open Large files");
                 dash.RunAction(storage); Pump(50); Check(form.Current is LargeFilesPage, "did not open Large files"); form.ShowPage(dash);
+            });
+
+            // ---------------------------------------------------------------- drives
+            var dv = form.Page<DrivesPage>();
+            await Step("Drives: list of volumes", () =>
+            {
+                form.ShowPage(dv); Pump(200); dv.LoadList(); Pump(100);
+                foreach (var r in dv.Rows) Note($"    {r.Name,-28} {r.Media,-12} {r.FS,-6} {r.Health,-9} {Fmt.Size(r.Size),10}  free {(r.Free != null ? Fmt.Size(r.Free.Value) : "-"),10}  {r.Disk}");
+                var boot = dv.Rows.FirstOrDefault(r => r.IsBoot);
+                Check(boot != null && boot.Size > 0 && boot.Free != null, "Windows drive missing from the list");
+                Check(dv.Ticked.Count == 1 && dv.Ticked[0].IsBoot, "only the Windows drive should be ticked at first");
+                var hidden = dv.List.Items.Cast<ListViewItem>().FirstOrDefault(i => ((DriveRow)i.Tag).IsSystemPart);
+                if (hidden != null) { hidden.Checked = true; Pump(50); Check(!hidden.Checked, "hidden Windows partitions must not be tickable"); Note("    hidden partition can't be ticked: " + hidden.Text); }
+                else Note("    (no hidden partitions on this PC)");
+            });
+            await Step("Drives: Optimize the Windows drive", async () =>
+            {
+                foreach (ListViewItem i in dv.List.Items) i.Checked = ((DriveRow)i.Tag).IsBoot;
+                var sw = Stopwatch.StartNew(); await dv.RunTool("optimize");
+                Note($"    {sw.Elapsed.TotalSeconds:0}s: {dv.Status.Text}");
+                foreach (var l in dv.Out.Lines.Where(l => l.Trim().Length > 0).Reverse().Take(6).Reverse()) Note("      | " + l.Trim());
+                Check(!dv.Busy && !ToolLock.Busy, "still busy");
+                Check(dv.Status.Text.Contains("optimized") || dv.Status.Text.Contains("can't be optimized"), "optimize failed: " + dv.Status.Text);
+            });
+            Shot("drives");
+            await Step("Drives: Check for errors, then Cancel", async () =>
+            {
+                dv.AutoCancelSec = 6; var sw = Stopwatch.StartNew(); await dv.RunTool("check"); dv.AutoCancelSec = 0;
+                Note($"    {sw.Elapsed.TotalSeconds:0}s: {dv.Status.Text}");
+                Check(dv.Status.Text == "Cancelled." || dv.Status.Text.Contains("no problems found"), "unexpected result: " + dv.Status.Text);
+                await Task.Delay(2000);
+                Check(Process.GetProcessesByName("chkdsk").Length == 0, "chkdsk is still running after Cancel");
+                Check(sw.Elapsed.TotalSeconds < 40, "Cancel took too long");
+            });
+            await Step("Drives: Clean junk opens Cleanup for the ticked drive", async () =>
+            {
+                form.ShowPage(dv); foreach (ListViewItem i in dv.List.Items) i.Checked = ((DriveRow)i.Tag).IsBoot;
+                await dv.CleanJunk();
+                Check(form.Current is CleanupPage, "Cleanup not shown"); Check(!cl.Busy, "scan did not finish");
+                Note("    ticked: " + string.Join(", ", cl.Rows.Where(i => i.Checked).Select(i => i.Text)));
+                Check(cl.Rows.Where(i => i.Checked).All(i => ((CleanTarget)i.Tag).DefaultOn), "only the recommended rows should be ticked");
+            });
+
+            // ---------------------------------------------------------------- repair
+            var rp = form.Page<RepairPage>();
+            await Step("Repair: tools and plain-language verdicts", () =>
+            {
+                form.ShowPage(rp); Pump(100);
+                Note("    tools: " + string.Join(" | ", rp.List.Items.Cast<ListViewItem>().Select(i => i.Text)));
+                Check(rp.List.Items.Count >= 6, "tools missing");
+                ToolResult R(int code, string text) => new ToolResult { Code = code, Text = text };
+                var cases = new (string Id, ToolResult R, string Expect)[]
+                {
+                    ("sfc", R(0, "Windows Resource Protection did not find any integrity violations."), "No problems found"),
+                    ("sfc", R(0, "Windows Resource Protection found corrupt files and successfully repaired them."), "Found and repaired"),
+                    ("sfc", R(0, "Windows Resource Protection found corrupt files but was unable to fix some of them."), "Some files could not be repaired"),
+                    ("dism-scan", R(0, "No component store corruption detected.\r\nThe operation completed successfully."), "No damage found"),
+                    ("dism-scan", R(0, "The component store is repairable."), "Damage found"),
+                    ("dism-restore", R(0, "The restore operation completed successfully."), "Windows image is healthy"),
+                    ("dism-restore", R(unchecked((int)0x800F081F), "Error: 0x800f081f"), "could not be downloaded (0x800F081F)"),
+                    ("dism-restore", R(unchecked((int)0x800F0954), "Error: 0x800f0954"), "Windows Update policy"),
+                    ("dism-check", new ToolResult { Cancelled = true }, "Cancelled"),
+                };
+                foreach (var c in cases) { var v = Repair.Judge(c.Id, c.R); Check(v.Text.Contains(c.Expect), $"{c.Id}: '{v.Text}' should contain '{c.Expect}'"); }
+                Check(ConsoleTool.Format("Progress 10%\rProgress 55%\rProgress 100%\r\nDone") == "Progress 100%\r\nDone", "progress lines not collapsed");
+                Check(ConsoleTool.Percent("[====  45.3%  ]") == 45, "percent not read");
+                Check(ConsoleTool.Decode(System.Text.Encoding.Unicode.GetBytes("Verification 100% complete.")) == "Verification 100% complete.", "UTF-16 output not read");
+            });
+            await Step("Repair: Quick Windows health check", async () =>
+            {
+                rp.Select("dism-check"); rp.RestorePt.Checked = false; Pump(50);
+                Check(rp.Run.Enabled, "Run should enable when a tool is selected");
+                var sw = Stopwatch.StartNew(); await rp.RunSelected();
+                Note($"    {sw.Elapsed.TotalSeconds:0}s: {rp.Status.Text}");
+                foreach (var l in rp.Out.Lines.Where(l => l.Trim().Length > 0).Reverse().Take(4).Reverse()) Note("      | " + l.Trim());
+                Check(rp.LastRun.Count == 1 && rp.LastRun[0].V.Level == "OK", "health check: " + rp.Status.Text);
+                Check(Repair.Results().TryGetValue("dism-check", out var saved) && saved.EndsWith(rp.LastRun[0].V.Text), "result not saved");
+                var row = rp.List.Items.Cast<ListViewItem>().First(i => (string)i.Tag == "dism-check"); Note("    list: " + row.SubItems[2].Text);
+                Check(Directory.GetFiles(AppPaths.Logs, "Quick-Windows-health-check-*.txt").Length > 0, "log not saved");
+            });
+            Shot("repair");
+            await Step("Repair: Cancel stops the tool", async () =>
+            {
+                rp.Select("dism-scan"); rp.AutoCancelSec = 8; var sw = Stopwatch.StartNew(); await rp.RunSelected(); rp.AutoCancelSec = 0;
+                Note($"    {sw.Elapsed.TotalSeconds:0}s: {rp.Status.Text}");
+                Check(rp.Status.Text == "Cancelled." || (rp.LastRun.Count == 1 && rp.LastRun[0].V.Level == "OK"), "unexpected: " + rp.Status.Text);
+                await Task.Delay(2000);
+                Check(Process.GetProcessesByName("Dism").Length == 0, "DISM still running after Cancel");
+                Check(!ToolLock.Busy && rp.Recommended.Enabled, "page still busy");
+            });
+            string wuRoot = Path.Combine(CleanEngine.MyTemp, "CleanSweepWuTest");
+            var realFolders = Repair.WuFolders; string realJournal = Repair.Journal;
+            await Step("Repair: Windows Update repair, undo and delete backups (stand-in folders)", async () =>
+            {
+                Reset(wuRoot);
+                Repair.WuFolders = new[] { Path.Combine(wuRoot, "SoftwareDistribution"), Path.Combine(wuRoot, "catroot2") };
+                Repair.Journal = Path.Combine(wuRoot, "wu-repair.json"); Repair.SkipServices = true;
+                foreach (var f in Repair.WuFolders) { Directory.CreateDirectory(Path.Combine(f, "Download")); File.WriteAllText(Path.Combine(f, @"Download\update.cab"), new string('x', 50000)); }
+                rp.UpdateList(); Check(!rp.List.Items.Cast<ListViewItem>().Any(i => (string)i.Tag == "wu-undo"), "Undo should be hidden before a repair");
+                rp.RestorePt.Checked = true;   // also tries the restore point (on a PC with System Restore off it asks, and the test answers Yes)
+                await rp.Start(new[] { "wu-reset" }, "Repair Windows Update"); Note("    reset: " + rp.Status.Text);
+                foreach (var l in rp.Out.Lines.Where(l => l.Trim().Length > 0).Take(6)) Note("      | " + l.Trim());
+                Check(rp.LastRun.Count == 1 && rp.LastRun[0].V.Level == "Repaired", "reset failed");
+                Check(Repair.WuFolders.All(f => !Directory.Exists(f)) && Repair.WuBackups().Count == 2, "folders not set aside as backups");
+                Check(rp.List.Items.Cast<ListViewItem>().Any(i => (string)i.Tag == "wu-undo") && rp.List.Items.Cast<ListViewItem>().Any(i => (string)i.Tag == "wu-purge"), "Undo / Delete backups not offered");
+                Directory.CreateDirectory(Repair.WuFolders[0]);   // Windows rebuilds the cache
+                rp.RestorePt.Checked = false;
+                await rp.Start(new[] { "wu-undo" }, "Undo"); Note("    undo: " + rp.Status.Text);
+                Check(Repair.WuFolders.All(f => File.Exists(Path.Combine(f, @"Download\update.cab"))), "original folders not put back");
+                Check(!File.Exists(Repair.Journal), "journal should be gone after undo");
+                await rp.Start(new[] { "wu-reset" }, "Repair Windows Update");
+                await rp.Start(new[] { "wu-purge" }, "Delete backups"); Note("    delete backups: " + rp.Status.Text);
+                Check(Repair.WuBackups().Count == 0 && rp.Status.Text.StartsWith("Freed"), "backups not deleted");
+                var pj = Path.Combine(wuRoot, "ps-journal.json");
+                File.WriteAllText(pj, "{\r\n  \"Date\": \"2026-09-01T10:00:00\",\r\n  \"Renamed\": [ { \"From\": \"C:\\\\Windows\\\\SoftwareDistribution\", \"To\": \"C:\\\\Windows\\\\SoftwareDistribution.bak-20260901-100000\" } ],\r\n  \"StartTypes\": { \"wuauserv\": \"Disabled\" }\r\n}");
+                Repair.Journal = pj; var j = Repair.ReadJournal();
+                Check(j != null && j.Renamed.Count == 1 && j.Renamed[0]["To"].EndsWith("bak-20260901-100000") && j.StartTypes["wuauserv"] == "Disabled", "main-app journal not read");
+            });
+            Repair.WuFolders = realFolders; Repair.Journal = realJournal; Repair.SkipServices = false; rp.UpdateList();
+            try { Directory.Delete(wuRoot, true); } catch { }
+            await Step("Dashboard: Repair and Optimize tiles open their pages", () =>
+            {
+                form.ShowPage(dash); Pump(100);
+                Check(dash.Tiles["repair"].Available && dash.Tiles["optimize"].Available, "tiles should be available now");
+                var f = new Finding("Stability", Engine.Status.Problem, "x", "", "page:Repair", "Open Repair tools");
+                dash.RunAction(f); Pump(50); Check(form.Current is RepairPage, "did not open Repair"); form.ShowPage(dash);
+                Check(!dash.Tiles["network"].Available, "Network is still a later phase");
             });
 
             await Step("Messages asked during the test", () => { foreach (var m in Msg.Log) Note("  " + m); foreach (var o in Shell.TestOpened) Note("  [would open] " + o); });

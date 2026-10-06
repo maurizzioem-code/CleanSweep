@@ -43,7 +43,13 @@ namespace CleanSweep
                 Settings.Load();
                 Form = new MainForm();
                 var dash = new DashboardPage();
-                Form.Build(new Page[] { dash, new CleanupPage(), new LargeFilesPage(), new AboutPage() });
+                Form.Build(new Page[] { dash, new CleanupPage(), new LargeFilesPage(), new DrivesPage(), new RepairPage(), new AboutPage() });
+                Form.FormClosing += (s, e) =>
+                {
+                    if (!Pages.ToolLock.Busy || Msg.Test || e.CloseReason != CloseReason.UserClosing) return;
+                    if (Msg.Show($"\"{Pages.ToolLock.Running}\" is still running. Stop it and close CleanSweep?", "CleanSweep", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) e.Cancel = true;
+                    else { Form.Page<DrivesPage>()?.Stop.PerformClick(); Form.Page<RepairPage>()?.Stop.PerformClick(); }
+                };
                 // First health check runs automatically when the window opens (read-only)
                 if (testOut == null) Form.Shown += async (s, e) => await dash.RunCheckAsync();
 

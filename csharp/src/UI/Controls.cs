@@ -162,6 +162,13 @@ namespace CleanSweep.UI
         {
             Dock = dock, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = true, Padding = new Padding(0, top, 0, 6)
         };
+        public static Panel Spacer(int h) => new Panel { Dock = DockStyle.Top, Height = h };
+        /// <summary>A label and its control that always stay on the same line when a row wraps.</summary>
+        public static FlowLayoutPanel Pair(params Control[] items)
+        {
+            var f = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = new Padding(0, 0, 0, 4), Padding = new Padding(0) };
+            f.Controls.AddRange(items); return f;
+        }
         /// <summary>Adds controls so they stack top-to-bottom in the order given (WinForms docks the last-added first).</summary>
         public static void Stack(Control parent, params Control[] topToBottom)
         {

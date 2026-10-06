@@ -16,6 +16,14 @@ jobs:
           dotnet build csharp\CleanSweep.csproj -c Release -nologo
           if ($LASTEXITCODE) { exit 1 }
           Get-Item csharp\bin\Release\CleanSweep.exe | Format-List Name, Length, LastWriteTime
+      - name: Visual Studio leftovers check (read-only tool)
+        timeout-minutes: 3
+        shell: cmd
+        run: |
+          echo.| "tools\Check Visual Studio leftovers.cmd"
+          type "%USERPROFILE%\Desktop\Visual Studio check.txt"
+          taskkill /im notepad.exe /f >nul 2>&1
+          exit /b 0
       - name: Self-test (drives the real window)
         timeout-minutes: 10
         shell: powershell

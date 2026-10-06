@@ -143,9 +143,9 @@ namespace CleanSweep.Pages
             }
             finally { SetBusy(false); }
             bool cancelled = cts.IsCancellationRequested;
+            if (kind == "optimize") LoadList();   // free space may have changed (refresh first - it resets the status line)
             Progress.Value = cancelled ? 0 : 100;
             Status.Text = cancelled && summary.All(x => x.EndsWith("cancelled")) ? "Cancelled." : string.Join("; ", summary);
-            if (kind == "optimize") LoadList();
         }
 
         /// <summary>Opens Cleanup with the right rows ticked: recommended junk for the Windows drive, leftover temp files for other drives.</summary>

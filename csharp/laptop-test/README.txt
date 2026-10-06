@@ -4,7 +4,7 @@ CleanSweep C# preview - laptop test
 2. Double-click "Test CleanSweep on this PC.cmd".
    If Windows shows "Windows protected your PC", click More info > Run anyway.
 3. Click Yes when Windows asks for administrator permission.
-4. Don't touch the CleanSweep window while it tests itself (1-2 minutes).
+4. Don't touch the CleanSweep window while it tests itself (2-3 minutes).
 5. Upload "CleanSweep test results.zip" from your Desktop in the chat.
 
 What the test does on your PC:
@@ -26,3 +26,11 @@ What the test does on your PC:
 - Creates a few large empty test files in C:\Users\Public, moves one to the Recycle Bin
   and removes it from there again, then deletes the rest. It also searches C: for
   large files for up to 90 seconds (it only reads, nothing is changed).
+- Shortcuts: creates broken test shortcuts in C:\Users\Public\CleanSweepShortcutTest, moves
+  them to the Recycle Bin and removes them from there, then only scans (reads) your own
+  Desktop and Start menu - none of your shortcuts are removed.
+- Registry: adds two fake entries of its own named "CleanSweepSelfTest", removes them
+  with a backup, restores them from the backup and then deletes them. Your own registry
+  entries are only scanned (read), never removed.
+- Network: pings the internet (1.1.1.1) and looks up a few websites. The network fixes
+  are only rehearsed - your connection, DNS and adapter settings are not changed.

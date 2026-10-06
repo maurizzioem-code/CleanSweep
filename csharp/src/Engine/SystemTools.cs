@@ -165,6 +165,31 @@ namespace CleanSweep.Engine
             try { Directory.CreateDirectory(AppPaths.Dir); File.WriteAllText(ResultFile, new JavaScriptSerializer().Serialize(r), new UTF8Encoding(true)); } catch { }
         }
 
+        /// <summary>When a stored result was recorded ("MMM d HH:mm - ..." - no year, so it's the most recent such date).</summary>
+        public static DateTime? ResultTime(string stored)
+        {
+            if (string.IsNullOrEmpty(stored)) return null;
+            int dash = stored.IndexOf(" - "); if (dash < 0) return null;
+            if (!DateTime.TryParseExact(stored.Substring(0, dash), "MMM d HH:mm", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var d)) return null;
+            if (d > DateTime.Now.AddDays(1)) d = d.AddYears(-1);
+            return d;
+        }
+        /// <summary>For a check that found damage: the later repair that succeeded ("Repair Windows image Oct 3"), or null.</summary>
+        public static string FixedLater(string id, Dictionary<string, string> res)
+        {
+            var when = ResultTime(res.TryGetValue(id, out var v) ? v : null); if (when == null) return null;
+            string[] fixers = id == "sfc" ? new[] { "sfc" } : new[] { "dism-restore" };
+            foreach (var f in fixers)
+            {
+                if (f == id || !res.TryGetValue(f, out var r)) continue;
+                var t = ResultTime(r);
+                if (t > when && (r.Contains("healthy") || r.Contains("No damage") || r.Contains("No problems"))) return $"{Tool(f).Name} {t:MMM d}";
+            }
+            // sfc "some files could not be repaired" is fixed by a later clean sfc run
+            if (id == "sfc") return null;
+            return null;
+        }
+
         public static List<DirectoryInfo> WuBackups() =>
             WuFolders.SelectMany(f => { try { var p = new DirectoryInfo(Path.GetDirectoryName(f)); return p.GetDirectories(Path.GetFileName(f) + ".bak-*"); } catch { return new DirectoryInfo[0]; } }).ToList();
         public static bool CanUndo => File.Exists(Journal);

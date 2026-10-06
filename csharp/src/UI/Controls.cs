@@ -162,6 +162,19 @@ namespace CleanSweep.UI
         {
             Dock = dock, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = true, Padding = new Padding(0, top, 0, 6)
         };
+        /// <summary>Grey help text that grows to fit its text at any window width and display scaling (never clipped).</summary>
+        public static Label Note(string text)
+        {
+            var l = new Label { Dock = DockStyle.Top, ForeColor = Theme.Sub, UseMnemonic = false, Text = text, Padding = new Padding(0, 2, 0, 4), Font = Theme.Body };
+            void Fit()
+            {
+                if (l.Width <= 0) return;
+                int h = TextRenderer.MeasureText(l.Text, l.Font, new Size(l.Width - l.Padding.Horizontal, 0), TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height + l.Padding.Vertical;
+                if (l.Height != h) l.Height = h;
+            }
+            l.SizeChanged += (s, e) => Fit(); l.TextChanged += (s, e) => Fit(); l.FontChanged += (s, e) => Fit();
+            return l;
+        }
         public static Panel Spacer(int h) => new Panel { Dock = DockStyle.Top, Height = h };
         /// <summary>A label and its control that always stay on the same line when a row wraps.</summary>
         public static FlowLayoutPanel Pair(params Control[] items)

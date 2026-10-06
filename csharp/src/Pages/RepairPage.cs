@@ -19,11 +19,7 @@ namespace CleanSweep.Pages
     {
         public readonly Label Status = Ui.Title("Select a repair tool, then click Run. Not sure? Click Recommended repair.", 12.5f);
         public readonly CsListView List = new CsListView(false) { Dock = DockStyle.Top, Height = 196, MultiSelect = false };
-        public readonly Label Info = new Label
-        {
-            Dock = DockStyle.Top, Height = 42, ForeColor = Theme.Sub, UseMnemonic = false, Padding = new Padding(2, 4, 2, 0),
-            Text = "DISM repairs Windows' own store of system files; System File Checker then uses it to fix your installed files."
-        };
+        public readonly Label Info = Ui.Note("DISM repairs Windows' own store of system files; System File Checker then uses it to fix your installed files.");
         public readonly CsCheckBox RestorePt = new CsCheckBox("Create a System Restore point before repairs (recommended)", true) { Margin = new Padding(0, 4, 0, 0) };
         public readonly CsButton Run = new CsButton("Run selected") { Enabled = false }, Recommended = new CsButton("Recommended repair", true),
             Stop = new CsButton("Cancel") { Enabled = false }, Logs = new CsButton("Open logs"), Cbs = new CsButton("Open CBS log");
@@ -38,7 +34,7 @@ namespace CleanSweep.Pages
 
         public RepairPage() : base("Repair", Glyph.Repair)
         {
-            List.AddColumns(("Tool", 270), ("Time", 90), ("Last result", 460));
+            List.AddColumns(("Tool", 250), ("Time", 85), ("Last result", 640)); List.ShowItemToolTips = true;
             var bar = Ui.Row(DockStyle.Top, 6); bar.Controls.AddRange(new Control[] { Recommended, Run, Stop, Logs, Cbs });
             opts.Controls.Add(RestorePt);
             Ui.Stack(this, Status, List, Info, opts, bar, Progress, Ui.Spacer(6), Out);
@@ -78,8 +74,12 @@ namespace CleanSweep.Pages
                 var it = new ListViewItem(t.Name) { Tag = t.Id, UseItemStyleForSubItems = false };
                 it.SubItems.Add(t.Time);
                 var last = res.TryGetValue(t.Id, out var v) ? v : "Not run yet";
+                bool warn = last.Contains("Failed") || last.Contains("could not") || last.Contains("Damage found") || last.Contains("Some files");
+                // an old "damage found" that a later successful repair took care of isn't a current problem
+                var fixedBy = warn ? Repair.FixedLater(t.Id, res) : null;
+                if (fixedBy != null) { last += "  (fixed since: " + fixedBy + ")"; warn = false; }
                 var si = it.SubItems.Add(last);
-                si.ForeColor = last == "Not run yet" ? Theme.Faint : last.Contains("Failed") || last.Contains("could not") || last.Contains("Damage found") ? Theme.Warn : Theme.Text;
+                si.ForeColor = last == "Not run yet" ? Theme.Faint : warn ? Theme.Warn : fixedBy != null ? Theme.Sub : Theme.Text;
                 if (t.Id == sel) it.Selected = true;
                 List.Items.Add(it);
             }

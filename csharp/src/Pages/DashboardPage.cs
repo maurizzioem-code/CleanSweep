@@ -74,7 +74,7 @@ namespace CleanSweep.Pages
             Tile("clean", UI.Glyph.Clean, "Quick clean", "Scan and remove junk on " + sys);
             Tile("space", UI.Glyph.Space, "Free up space", "Find large files on " + sys);
             Tile("repair", UI.Glyph.Repair, "Repair Windows", "DISM + System File Checker");
-            Tile("optimize", UI.Glyph.Speed, "Optimize drives", "TRIM SSDs, defragment HDDs");
+            Tile("optimize", UI.Glyph.Speed, "Optimize drives", "TRIM SSDs, defrag HDDs");
             Tile("network", UI.Glyph.Net, "Network check", "Test speed, latency and DNS");
             Tile("restore", UI.Glyph.Restore, "Restore point", "Create a safety snapshot");
             Ui.Stack(acts, L("One-click actions", Theme.UiFont(11, FontStyle.Bold), Theme.Text, 28), grid);

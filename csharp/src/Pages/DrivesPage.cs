@@ -49,12 +49,8 @@ namespace CleanSweep.Pages
             Optimize = new CsButton("Optimize", true), Stop = new CsButton("Cancel") { Enabled = false }, Reload = new CsButton("Refresh"), DiskMgmt = new CsButton("Disk Management");
         public readonly CsProgress Progress = new CsProgress { Dock = DockStyle.Top };
         public readonly ToolOutput Out = new ToolOutput();
-        readonly Label help = new Label
-        {
-            Dock = DockStyle.Top, Height = 40, ForeColor = Theme.Sub, UseMnemonic = false,
-            Text = "Check for errors scans while you keep working and changes nothing. Optimize lets Windows trim SSDs and defragment hard drives - " +
-                   "the same thing its weekly maintenance does. CleanSweep never resizes, formats or deletes partitions."
-        };
+        readonly Label help = Ui.Note("Check for errors scans while you keep working and changes nothing. Optimize lets Windows trim SSDs and defragment hard drives - " +
+                                      "the same thing its weekly maintenance does. CleanSweep never resizes, formats or deletes partitions.");
         public List<DriveRow> Rows { get; private set; } = new List<DriveRow>();
         public bool Busy { get; private set; }
         public Task Running { get; private set; } = Task.CompletedTask;

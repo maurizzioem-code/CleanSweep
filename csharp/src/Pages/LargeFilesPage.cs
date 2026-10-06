@@ -43,12 +43,8 @@ namespace CleanSweep.Pages
             MinSize.SelectedIndex = 0; MinSize.Margin = new Padding(0, 3, 18, 0);
             var opts = Ui.Row(); opts.Controls.AddRange(new Control[] { Ui.Pair(Ui.Text("Show files of at least"), MinSize), HideApps });
             var bar = Ui.Row(DockStyle.Top, 4); bar.Controls.AddRange(new Control[] { Search, Stop });
-            var help = new Label
-            {
-                Dock = DockStyle.Top, Height = 40, ForeColor = Theme.Sub, UseMnemonic = false,
-                Text = "Nothing is ticked for you - tick only files you are sure you don't need. They go to the Recycle Bin, so you can restore them. " +
-                       "Apps and games should be removed with Uninstall apps, not by deleting their files."
-            };
+            var help = Ui.Note("Nothing is ticked for you - tick only files you are sure you don't need. They go to the Recycle Bin, so you can restore them. " +
+                               "Apps and games should be removed with Uninstall apps, not by deleting their files.");
             List.AddColumns(("Size", 100), ("Name", 250), ("Type", 120), ("Modified", 100), ("Folder", 400));
             var bottom = Ui.Row(DockStyle.Bottom, 8); bottom.WrapContents = false;
             bottom.Controls.AddRange(new Control[] { OpenLoc, Recycle, Apps, Ticked });

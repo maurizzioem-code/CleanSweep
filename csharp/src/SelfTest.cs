@@ -40,6 +40,8 @@ namespace CleanSweep
             taskBefore = AutoClean.State(); string taskXml = taskBefore.Exists ? taskBefore.Xml : null;
             // ...and the repair results list (the test runs a few read-only checks)
             string repairSaved = null; try { if (File.Exists(Repair.ResultFile)) repairSaved = File.ReadAllText(Repair.ResultFile); } catch { }
+            // ...and the automatic cleanup history (the test's own runs shouldn't show up as yours)
+            string acHistSaved = null; try { if (File.Exists(AutoClean.HistoryFile)) acHistSaved = File.ReadAllText(AutoClean.HistoryFile); } catch { }
             bool done = false, restored = false;
             // Clicking X (or Alt+F4) while the test runs would end it early - keep the window open until it's finished
             form.FormClosing += (s, e) =>
@@ -51,6 +53,7 @@ namespace CleanSweep
             void Restore()
             {
                 if (restored) return; restored = true;
+                try { if (acHistSaved != null) File.WriteAllText(AutoClean.HistoryFile, acHistSaved, new System.Text.UTF8Encoding(true)); else if (File.Exists(AutoClean.HistoryFile)) File.Delete(AutoClean.HistoryFile); } catch { }
                 try { if (repairSaved != null) File.WriteAllText(Repair.ResultFile, repairSaved, new System.Text.UTF8Encoding(true)); else if (File.Exists(Repair.ResultFile)) File.Delete(Repair.ResultFile); } catch { }
                 try
                 {
@@ -141,6 +144,19 @@ namespace CleanSweep
                 }
             }
             Walk(p, false);
+            void Clip(Control c)
+            {
+                foreach (Control k in c.Controls)
+                {
+                    if (k is Label l && !l.AutoSize && !l.AutoEllipsis && l.Visible && l.Text.Length > 0 && l.Width > 0)
+                    {
+                        int need = TextRenderer.MeasureText(l.Text, l.Font, new Size(l.Width - l.Padding.Horizontal, 0), TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height;
+                        if (need > l.Height - l.Padding.Vertical + 2) bad.Add($"text cut off: '{(l.Text.Length > 40 ? l.Text.Substring(0, 40) + "..." : l.Text)}' needs {need}px, has {l.Height - l.Padding.Vertical}px");
+                    }
+                    Clip(k);
+                }
+            }
+            Clip(p);
             if (bad.Count > 0) Fail(string.Join("; ", bad));
         }
 
@@ -646,6 +662,9 @@ namespace CleanSweep
                     ("dism-check", new ToolResult { Cancelled = true }, "Cancelled"),
                 };
                 foreach (var c in cases) { var v = Repair.Judge(c.Id, c.R); Check(v.Text.Contains(c.Expect), $"{c.Id}: '{v.Text}' should contain '{c.Expect}'"); }
+                var res = new Dictionary<string, string> { ["dism-scan"] = "Oct 1 07:42 - Damage found - run Repair Windows image", ["dism-restore"] = "Oct 3 11:42 - Windows image is healthy (repaired if needed) - now run System File Checker" };
+                Check(Repair.FixedLater("dism-scan", res) == "Repair Windows image Oct 3", "old damage fixed by a later repair should be marked: " + Repair.FixedLater("dism-scan", res));
+                res["dism-restore"] = "Sep 29 10:00 - Windows image is healthy"; Check(Repair.FixedLater("dism-scan", res) == null, "an earlier repair doesn't fix later damage");
                 Check(ConsoleTool.Format("Progress 10%\rProgress 55%\rProgress 100%\r\nDone") == "Progress 100%\r\nDone", "progress lines not collapsed");
                 Check(ConsoleTool.Percent("[====  45.3%  ]") == 45, "percent not read");
                 Check(ConsoleTool.Decode(System.Text.Encoding.Unicode.GetBytes("Verification 100% complete.")) == "Verification 100% complete.", "UTF-16 output not read");

@@ -94,10 +94,34 @@ namespace CleanSweep.Engine
             Trace.Write($"Tool end: {title} code {res.Code}{(res.Cancelled ? " (cancelled)" : "")}");
             return res;
         }
+        /// <summary>Process IDs stopped by the last Cancel (the tool and everything it started).</summary>
+        public static List<int> LastKilled = new List<int>();
+        static List<int> Tree(int root)
+        {
+            var kids = new Dictionary<int, List<int>>();
+            try
+            {
+                using (var q = new System.Management.ManagementObjectSearcher("SELECT ProcessId, ParentProcessId FROM Win32_Process"))
+                    foreach (System.Management.ManagementObject o in q.Get())
+                    {
+                        int id = Convert.ToInt32(o["ProcessId"]), par = Convert.ToInt32(o["ParentProcessId"]);
+                        if (!kids.TryGetValue(par, out var l)) kids[par] = l = new List<int>(); l.Add(id);
+                    }
+            }
+            catch { }
+            var all = new List<int> { root };
+            for (int i = 0; i < all.Count; i++) if (kids.TryGetValue(all[i], out var l)) foreach (var k in l) if (!all.Contains(k)) all.Add(k);
+            return all;
+        }
         static void KillTree(int pid)
         {
+            var tree = Tree(pid); LastKilled = tree;
             try { using (var k = Process.Start(new ProcessStartInfo(SysExe("taskkill.exe"), $"/PID {pid} /T /F") { UseShellExecute = false, CreateNoWindow = true })) k.WaitForExit(10000); } catch { }
+            // make sure every process in the tree is really gone (taskkill can miss a child that was just starting)
+            foreach (var id in tree)
+                try { using (var p = Process.GetProcessById(id)) { if (!p.HasExited) { p.Kill(); } p.WaitForExit(10000); } } catch { }
         }
+        public static bool AnyAlive(IEnumerable<int> ids) => ids.Any(id => { try { using (var p = Process.GetProcessById(id)) return !p.HasExited; } catch { return false; } });
     }
 
     /// <summary>Short Windows commands (netsh, ipconfig, reg, powercfg...) run hidden; returns exit code and output.</summary>

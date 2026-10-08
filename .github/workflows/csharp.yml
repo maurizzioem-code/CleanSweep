@@ -13,7 +13,7 @@ jobs:
         shell: powershell
         run: |
           dotnet --version
-          dotnet build csharp\CleanSweep.csproj -c Release -nologo
+          dotnet build csharp\CleanSweep.csproj -c Release -nologo -p:Version=5.0.0.${{ github.run_number }}
           if ($LASTEXITCODE) { exit 1 }
           Get-Item csharp\bin\Release\CleanSweep.exe | Format-List Name, Length, LastWriteTime
       - name: Visual Studio leftovers check (read-only tool)
@@ -44,6 +44,30 @@ jobs:
           $zip = Join-Path ([Environment]::GetFolderPath('Desktop')) 'CleanSweep test results.zip'
           if (-not (Test-Path $zip)) { "results zip missing"; exit 1 }
           Copy-Item $zip $PWD; Get-Content (Join-Path ([Environment]::GetFolderPath('Desktop')) 'CleanSweep test results\pc.txt')
+      - name: Real install and uninstall (Start menu, Settings > Apps)
+        timeout-minutes: 5
+        shell: powershell
+        run: |
+          $exe = (Resolve-Path csharp\bin\Release\CleanSweep.exe).Path
+          $p = Start-Process $exe -ArgumentList "--install","--quiet","--no-start" -PassThru -Wait; "install exit code: $($p.ExitCode)"
+          $inst = Join-Path $env:LOCALAPPDATA "Programs\CleanSweep\CleanSweep.exe"
+          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) "CleanSweep.lnk"
+          $desk = Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) "CleanSweep.lnk"
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\CleanSweep"
+          $bad = 0
+          if (Test-Path $inst) { "installed: $inst  version $((Get-Item $inst).VersionInfo.FileVersion)" } else { "MISSING installed exe"; $bad++ }
+          foreach ($l in $lnk, $desk) { if (Test-Path $l) { $t = (New-Object -ComObject WScript.Shell).CreateShortcut($l).TargetPath; "shortcut: $l -> $t"; if ($t -ne $inst) { $bad++ } } else { "MISSING shortcut $l"; $bad++ } }
+          if (Test-Path $key) { Get-ItemProperty $key | Select-Object DisplayName, DisplayVersion, UninstallString, EstimatedSize | Format-List | Out-String } else { "MISSING Settings > Apps entry"; $bad++ }
+          # Settings > Apps lists it (the same list Windows uses)
+          $apps = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" | Where-Object DisplayName -eq "CleanSweep"
+          "listed in Installed apps: $([bool]$apps)"
+          $ping = Join-Path $env:TEMP "cs-ping.txt"; Start-Process $inst -ArgumentList "--ping","`"$ping`"" -Wait; "installed copy says: $(Get-Content $ping -Raw)"
+          $u = (Get-ItemProperty $key).QuietUninstallString; "uninstall: $u"
+          $p = Start-Process $inst -ArgumentList "--uninstall","--quiet" -PassThru -Wait; "uninstall exit code: $($p.ExitCode)"
+          foreach ($i in 1..40) { if (-not (Test-Path (Split-Path $inst))) { break }; Start-Sleep -Milliseconds 500 }
+          foreach ($x in (Split-Path $inst), $lnk, $desk, $key) { if (Test-Path $x) { "LEFT BEHIND: $x"; $bad++ } }
+          if (Test-Path (Join-Path $env:LOCALAPPDATA "CleanSweep")) { "kept data folder: $env:LOCALAPPDATA\CleanSweep" }
+          "problems: $bad"; if ($bad) { exit 1 }
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: csharp-test-output, path: test-output }

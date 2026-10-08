@@ -879,6 +879,100 @@ namespace CleanSweep
                 });
             Shot("network");
 
+            // ---------------------------------------------------------------- installer (sandbox: never the real Start menu or Settings > Apps)
+            var about = form.Page<AboutPage>();
+            string sbx = Path.Combine(CleanEngine.MyTemp, "CleanSweepInstallTest");
+            var real = (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey);
+            Installer.UseSandbox(sbx);
+            string psLauncher = Path.Combine(Installer.DataDir, "CleanSweep.exe");
+            Process StartInstalled(string args) => Process.Start(new ProcessStartInfo(Installer.Exe, args) { UseShellExecute = false, WorkingDirectory = Installer.Dir });
+            string Ping(int waitSec = 0)
+            {
+                string f = Path.Combine(sbx, "ping-" + Guid.NewGuid().ToString("N") + ".txt");
+                StartInstalled($"--ping \"{f}\"" + (waitSec > 0 ? $" --wait {waitSec}" : "")).Dispose();
+                var sw = Stopwatch.StartNew(); while (!File.Exists(f) && sw.ElapsedMilliseconds < 30000) Pump(200);
+                Pump(200); try { return File.ReadAllText(f); } catch { return null; }
+            }
+            await Step("Installer: install for this account, PowerShell edition present (sandbox)", () =>
+            {
+                Reset(sbx); Directory.CreateDirectory(Installer.DataDir); Directory.CreateDirectory(Installer.StartMenuDir); Directory.CreateDirectory(Installer.DesktopDir);
+                File.WriteAllText(Path.Combine(Installer.DataDir, "CleanSweep.ps1"), "# stand-in for the PowerShell edition");
+                File.WriteAllText(psLauncher, "stand-in"); File.WriteAllText(Path.Combine(Installer.DataDir, "settings.json"), "{}");
+                Installer.MakeLink(Installer.StartMenuLink, psLauncher, Installer.DataDir, "CleanSweep (PowerShell edition)");
+                form.ShowPage(about); Pump(100);
+                Check(about.InstallBtn.Text == "Install..." && !about.UninstallBtn.Enabled, "Settings should offer Install when not installed: " + about.InstallInfo.Text);
+                about.ShowInstall(); var f = about.OpenInstall; Pump(300);
+                Shot("installer", f);
+                Check(f.Install.Text == "Install" && f.StartMenu.Checked && f.Desktop.Checked, "install window defaults");
+                f.DoInstall(); Pump(200);
+                Note("    " + f.Result.Text);
+                Check(f.Installed, "install failed: " + f.Result.Text);
+                f.Close(); about.OpenInstall = null; about.UpdateInstallInfo();
+                Check(File.Exists(Installer.Exe) && new FileInfo(Installer.Exe).Length == new FileInfo(Installer.Source).Length, "exe not copied");
+                foreach (var l in new[] { Installer.StartMenuLink, Installer.DesktopLink })
+                {
+                    Note($"    {Path.GetFileName(Path.GetDirectoryName(l))}\\{Path.GetFileName(l)} -> {Shortcuts.Target(l)}");
+                    Check(string.Equals(Shortcuts.Target(l), Installer.Exe, StringComparison.OrdinalIgnoreCase), "shortcut does not open the installed copy: " + l);
+                }
+                Check(File.Exists(Path.Combine(Installer.Dir, @"previous shortcuts\start.lnk")), "PowerShell edition's shortcut was not kept");
+                var e = Installer.UninstallEntry();
+                Check(e != null, "no Settings > Apps entry");
+                if (e != null)
+                {
+                    foreach (var k in new[] { "DisplayName", "DisplayVersion", "Publisher", "UninstallString", "EstimatedSize" }) Note($"    {k} = {(e.TryGetValue(k, out var v) ? v : "(missing)")}");
+                    Check((string)e["DisplayName"] == "CleanSweep" && ((string)e["UninstallString"]).Contains(Installer.Exe) && ((string)e["UninstallString"]).EndsWith("--uninstall"), "uninstall entry wrong");
+                    Check(Missing.IsMissing(Missing.CmdPath((string)e["UninstallString"])) == false, "the Registry page would call this entry a leftover");
+                }
+                Check(about.InstallInfo.Text.StartsWith("Installed") && about.UninstallBtn.Enabled, "Settings page not updated: " + about.InstallInfo.Text);
+            });
+            await Step("Installer: the installed copy starts", () =>
+            {
+                var r = Ping(); Note("    " + (r ?? "no answer").Replace("\r\n", "  "));
+                Check(r != null && r.StartsWith(Installer.MyVersion.ToString()) && r.Contains(Installer.Exe), "installed copy did not run");
+            });
+            await Step("Installer: update asks before closing an open CleanSweep", () =>
+            {
+                Check(Ping(90) != null, "could not start the installed copy");
+                Check(Installer.RunningCopies().Count == 1, "running copy not detected");
+                bool threw = false;
+                try { Installer.Install(new Installer.Options(), n => false); } catch (OperationCanceledException) { threw = true; }
+                Check(threw && Installer.RunningCopies().Count == 1, "saying No should leave it open and change nothing");
+                int asked = 0; var log = Installer.Install(new Installer.Options(), n => { asked = n; return true; });
+                foreach (var l in log) Note("    " + l);
+                Check(asked == 1 && Installer.RunningCopies().Count == 0, "open copy was not closed after Yes");
+                Check(Ping() != null, "updated copy does not start");
+            });
+            await Step("Installer: uninstall from CleanSweep's Settings puts the PowerShell shortcuts back", () =>
+            {
+                about.ShowUninstall(false); Pump(200);
+                Note("    " + Msg.Log.LastOrDefault());
+                Check(Installer.UninstallEntry() == null, "Settings > Apps entry still there");
+                Check(!Directory.Exists(Installer.Dir), "app folder still there");
+                Check(File.Exists(Installer.StartMenuLink) && string.Equals(Shortcuts.Target(Installer.StartMenuLink), psLauncher, StringComparison.OrdinalIgnoreCase), "PowerShell edition's Start menu shortcut not put back");
+                Check(!File.Exists(Installer.DesktopLink), "Desktop shortcut still there");
+                Check(File.Exists(Path.Combine(Installer.DataDir, "settings.json")), "settings should be kept");
+                Check(about.InstallBtn.Text == "Install..." && !about.UninstallBtn.Enabled, "Settings page not updated");
+            });
+            await Step("Installer: uninstall from Settings > Apps removes everything (installed copy deletes itself)", () =>
+            {
+                File.Delete(Path.Combine(Installer.DataDir, "CleanSweep.ps1")); File.Delete(Installer.StartMenuLink);
+                Installer.Install(new Installer.Options { Desktop = false });
+                Check(File.Exists(Installer.StartMenuLink) && !File.Exists(Installer.DesktopLink), "Desktop shortcut should be optional");
+                var e = Installer.UninstallEntry(); string cmd = (string)e["QuietUninstallString"];
+                Note("    runs: " + cmd + " --remove-data");
+                using (var p = StartInstalled($"--uninstall --quiet --remove-data --sandbox \"{sbx}\"")) { p.WaitForExit(30000); Note($"    exit code {p.ExitCode}"); }
+                var sw = Stopwatch.StartNew(); while (Directory.Exists(Installer.Dir) && sw.ElapsedMilliseconds < 20000) Pump(250);
+                Note($"    app folder gone after {sw.Elapsed.TotalSeconds:0.0}s");
+                Check(!Directory.Exists(Installer.Dir), "app folder still there");
+                Check(Installer.UninstallEntry() == null && !File.Exists(Installer.StartMenuLink), "entry or shortcut left behind");
+                Check(!Directory.Exists(Installer.DataDir), "settings should be removed when asked");
+            });
+            foreach (var p in Installer.RunningCopies()) try { p.Kill(); } catch { }
+            try { Registry.CurrentUser.DeleteSubKeyTree(Installer.UninstallKey, false); } catch { }
+            (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey) = real; Installer.TouchSchedule = true;
+            try { Directory.Delete(sbx, true); } catch { }
+            about.UpdateInstallInfo();
+
             await Step("Messages asked during the test", () => { foreach (var m in Msg.Log) Note("  " + m); foreach (var o in Shell.TestOpened) Note("  [would open] " + o); });
             form.ShowPage(cl); Shot("cleanup-final");
             form.ShowPage(dash); Pump(300); Shot("dashboard-final"); SetSize(new Size(960, 640)); Pump(300); dash.ScrollToTop(); Shot("dashboard-960"); SetSize(new Size(1024, 720));

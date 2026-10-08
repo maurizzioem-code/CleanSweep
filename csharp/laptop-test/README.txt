@@ -34,3 +34,6 @@ What the test does on your PC:
   entries are only scanned (read), never removed.
 - Network: pings the internet (1.1.1.1) and looks up a few websites. The network fixes
   are only rehearsed - your connection, DNS and adapter settings are not changed.
+- Installer: installs CleanSweep into a test folder in your Temp folder, starts it, updates
+  it and uninstalls it again. Your real Start menu, Desktop and Settings > Apps are not
+  changed. (To really install CleanSweep, just double-click CleanSweep-CSharp-preview.exe.)

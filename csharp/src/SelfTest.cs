@@ -503,7 +503,21 @@ namespace CleanSweep
             await Step("Automatic cleanup: the scheduled task really runs", async () =>
             {
                 Old(acJunk); int before = AutoClean.History().Count(r => r.Trigger == "Scheduled");
-                AutoClean.RunTaskNow(); var sw = Stopwatch.StartNew();
+                var sw = Stopwatch.StartNew();
+                if (AutoClean.OnBattery)
+                {
+                    // "Only when plugged in" is on: Windows must refuse to start it on battery
+                    AutoClean.RunTaskNow();
+                    while (sw.ElapsedMilliseconds < 15000) { Pump(500); await Task.Delay(1); }
+                    var st = AutoClean.State();
+                    Note($"    on battery: Windows held the cleanup back as set (\"Only when plugged in\"), task result 0x{st.LastResult:X8}");
+                    Check(AutoClean.History().Count(r => r.Trigger == "Scheduled") == before, "the task ran on battery even though it is set to run only when plugged in");
+                    // now let it run on battery to check the task itself works
+                    var cfg = AutoCleanConfig.Load(); cfg.ACOnly = false; AutoClean.Schedule(cfg);
+                    Note("    allowed on battery for this test only, running again");
+                    sw.Restart();
+                }
+                AutoClean.RunTaskNow();
                 while (AutoClean.History().Count(r => r.Trigger == "Scheduled") == before && sw.ElapsedMilliseconds < 120000) { Pump(500); await Task.Delay(1); }
                 var last = AutoClean.History().LastOrDefault();
                 Note($"    after {sw.Elapsed.TotalSeconds:0}s: {(last != null ? last.Trigger + " - " + AutoClean.Summary(last) : "nothing")}");

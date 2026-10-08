@@ -82,7 +82,7 @@ namespace CleanSweep.Engine
             try { return Service().GetFolder(TaskFolder).GetTask(TaskName); } catch { return null; }
         }
 
-        public class TaskState { public bool Exists, Enabled; public DateTime? NextRun, LastRun; public string Command = "", Xml = ""; public bool RunsPowerShellEdition => Command.IndexOf("wscript", StringComparison.OrdinalIgnoreCase) >= 0 || Command.IndexOf("powershell", StringComparison.OrdinalIgnoreCase) >= 0; }
+        public class TaskState { public bool Exists, Enabled; public DateTime? NextRun, LastRun; public int LastResult; public string Command = "", Xml = ""; public bool RunsPowerShellEdition => Command.IndexOf("wscript", StringComparison.OrdinalIgnoreCase) >= 0 || Command.IndexOf("powershell", StringComparison.OrdinalIgnoreCase) >= 0; }
         public static TaskState State()
         {
             var st = new TaskState();
@@ -91,7 +91,7 @@ namespace CleanSweep.Engine
                 var t = GetTask(); if (t == null) return st;
                 st.Exists = true; st.Enabled = t.Enabled; st.Xml = t.Xml;
                 DateTime n = t.NextRunTime; if (n.Year > 2000) st.NextRun = n;
-                DateTime l = t.LastRunTime; if (l.Year > 2000) st.LastRun = l;
+                DateTime l = t.LastRunTime; if (l.Year > 2000) st.LastRun = l; try { st.LastResult = (int)t.LastTaskResult; } catch { }
                 foreach (dynamic a in t.Definition.Actions) { try { st.Command = a.Path + " " + a.Arguments; } catch { } break; }
             }
             catch (Exception e) { Trace.Write("Task state: " + e.Message); }
@@ -192,6 +192,8 @@ namespace CleanSweep.Engine
             folder.RegisterTask(TaskName, xml, 6 /* CREATE_OR_UPDATE */, null, null, 3 /* INTERACTIVE_TOKEN */);
         }
         /// <summary>Asks Task Scheduler to start the task now (used by the self-test to check the real scheduled run).</summary>
+        /// <summary>True when a laptop is running on battery (desktops and plugged-in laptops return false).</summary>
+        public static bool OnBattery => System.Windows.Forms.SystemInformation.PowerStatus.PowerLineStatus == System.Windows.Forms.PowerLineStatus.Offline;
         public static void RunTaskNow() { var t = GetTask(); if (t == null) throw new Exception("task not found"); t.Run(null); }
         public static void DeleteTaskOnly() { try { Service().GetFolder(TaskFolder).DeleteTask(TaskName, 0); } catch { } }
 

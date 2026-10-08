@@ -232,7 +232,9 @@ namespace CleanSweep.Engine
             try
             {
                 Process.Start(new ProcessStartInfo(ConsoleTool.SysExe("WindowsPowerShell\\v1.0\\powershell.exe"),
-                    "-NoProfile -NonInteractive -WindowStyle Hidden -Command \"" + ps.Replace("\"", "\\\"") + "\"") { UseShellExecute = false, CreateNoWindow = true })?.Dispose();
+                    "-NoProfile -NonInteractive -WindowStyle Hidden -Command \"" + ps.Replace("\"", "\\\"") + "\"")
+                    // must not start inside the folder it deletes (a process's working folder can't be removed)
+                    { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetTempPath() })?.Dispose();
             }
             catch (Exception e) { Trace.Write("DeleteLater failed: " + e.Message); }
         }

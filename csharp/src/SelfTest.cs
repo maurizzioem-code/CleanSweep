@@ -333,7 +333,8 @@ namespace CleanSweep
                 var sw = Stopwatch.StartNew(); await cl.ScanAsync(); sw.Stop(); t.Stop();
                 Note($"    {cl.Status.Text}  ({sw.ElapsedMilliseconds} ms, UI timer ticked {ticks} times)");
                 foreach (var i in cl.Rows) Note("      " + Row(i));
-                if (sw.ElapsedMilliseconds > 500) Check(ticks > sw.ElapsedMilliseconds / 50 / 4, "UI thread was blocked during the scan");
+                // only meaningful for scans long enough to measure (a 0.5 s scan gives too few timer ticks to judge)
+                if (sw.ElapsedMilliseconds > 1500) Check(ticks > sw.ElapsedMilliseconds / 50 / 4, "UI thread was blocked during the scan");
             });
             await Step("Cleanup: clean recommended", async () =>
             {

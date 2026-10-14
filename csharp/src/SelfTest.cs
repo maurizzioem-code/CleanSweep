@@ -405,7 +405,8 @@ namespace CleanSweep
             {
                 foreach (ListViewItem it in cl.Problems.Items) it.Checked = it.Text == "locked.txt";
                 cl.AddIgnore("file"); Note("    " + cl.Status.Text); Note("    rules: " + string.Join(" | ", CleanEngine.IgnoreRules));
-                Check(cl.Problems.Items.Count == 0, "ignored file still listed");
+                // other apps' files can be in use too (e.g. Copilot's), so only look at the test's own file
+                Check(!cl.Problems.Items.Cast<ListViewItem>().Any(i => i.Text == "locked.txt"), "ignored file still listed");
                 string lp = Path.Combine(d, "locked.txt");
                 Check(CleanEngine.IsIgnored(lp), "rule not applied");
                 cl.ShowIgnoreList(); cl.IgnoreForm.TopMost = true; Shot("temp-ignore-list", cl.IgnoreForm);
@@ -415,6 +416,7 @@ namespace CleanSweep
             });
             await Step("Temp: Retry after the app lets go", async () =>
             {
+                CleanEngine.IgnoreRules.Remove("file:" + Path.Combine(d, "locked.txt"));   // in case the step before stopped early
                 await cl.ScanAsync(); await cl.CleanAsync();
                 Check(cl.Problems.Items.Cast<ListViewItem>().Any(i => i.Text == "locked.txt"), "locked file not listed again");
                 lockA.Dispose();

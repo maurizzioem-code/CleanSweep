@@ -130,7 +130,8 @@ namespace CleanSweep.Engine
             if (fv.ProductName != "CleanSweep") return "The download is not CleanSweep, so it was not installed.";
             var v = Installer.VersionOf(file);
             if (v != u.Version) return $"The download is build {v?.Revision} but build {u.Version.Revision} was expected, so it was not installed.";
-            return null;
+            // once CleanSweep is signed, updates must be signed by the same publisher
+            return Signing.UpdateProblem(Installer.Source, file);
         }
 
         /// <summary>Starts the verified exe to install itself once this process has closed. The caller then exits.</summary>

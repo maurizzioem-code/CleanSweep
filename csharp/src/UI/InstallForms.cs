@@ -12,7 +12,8 @@ namespace CleanSweep.UI
         public readonly CsCheckBox StartMenu = new CsCheckBox("Add CleanSweep to the Start menu", true),
             Desktop = new CsCheckBox("Add a Desktop shortcut", true),
             StartAfter = new CsCheckBox("Open CleanSweep when it's done", true),
-            DontAsk = new CsCheckBox("Don't ask again when I run it without installing");
+            DontAsk = new CsCheckBox("Don't ask again when I run it without installing"),
+            RetirePs = new CsCheckBox("Retire the PowerShell edition and move its automatic cleanup here", true);
         public readonly CsButton Install = new CsButton("Install", true) { MinimumSize = new Size(120, 34), Margin = new Padding(8, 0, 0, 0) };
         public readonly CsButton Later = new CsButton("Run without installing") { MinimumSize = new Size(100, 34), Margin = new Padding(8, 0, 0, 0) };
         public readonly Label Result = new Label { AutoSize = true, MaximumSize = new Size(540, 0), Margin = new Padding(0, 10, 0, 0), UseMnemonic = false };
@@ -36,9 +37,12 @@ namespace CleanSweep.UI
             body.Controls.Add(L(what, Theme.Body, Theme.Sub, 4));
             body.Controls.Add(L(Installer.Dir, Theme.UiFont(9.5f, FontStyle.Bold), Theme.Text));
             body.Controls.Add(L("Nothing is added to Program Files, startup, services or drivers. CleanSweep will be listed in Settings > Apps, so you can uninstall it like any other app. Your settings and history are kept.", Theme.Body, Theme.Sub, 6));
-            if (Installer.PowerShellEdition)
-                body.Controls.Add(L("The PowerShell edition of CleanSweep is on this PC too. Its files, settings and schedule stay as they are; its shortcuts will open this version instead, and uninstalling this version puts them back.", Theme.Body, Theme.Warn, 6));
             foreach (var c in new[] { StartMenu, Desktop, StartAfter }) { c.Margin = new Padding(0, c == StartMenu ? 12 : 2, 0, 2); body.Controls.Add(c); }
+            if (PsEdition.Present)
+            {
+                RetirePs.Margin = new Padding(0, 10, 0, 2); body.Controls.Add(RetirePs);
+                body.Controls.Add(L($"The PowerShell edition ({PsEdition.Version}) is on this PC too. Retiring it keeps your settings, history and schedule (same days and time) and moves its program files to a backup folder, so you can put it back from Settings. Untick to keep both for now.", Theme.Body, Theme.Sub, 2));
+            }
             if (update)
             {
                 // keep what the user chose last time
@@ -72,6 +76,16 @@ namespace CleanSweep.UI
                 Installed = true;
                 Result.ForeColor = Theme.Ok;
                 Result.Text = (Install.Text == "Update" ? "Updated. " : "Installed. ") + (StartMenu.Checked ? "Find it in the Start menu as \"CleanSweep\"." : "");
+                if (PsEdition.Present && RetirePs.Checked)
+                {
+                    try
+                    {
+                        PsEdition.Retire(n => Msg.Confirm("The PowerShell edition of CleanSweep is open. Close it so it can be retired?", Text));
+                        Result.Text += " The PowerShell edition was retired; your settings and schedule were kept.";
+                    }
+                    catch (OperationCanceledException) { Result.ForeColor = Theme.Warn; Result.Text += " The PowerShell edition was left as it is because it is still open - retire it later from Settings."; }
+                    catch (Exception x) { Result.ForeColor = Theme.Warn; Result.Text += " The PowerShell edition could not be retired (" + x.Message + ") - nothing of it was changed."; Trace.Write("Retire failed: " + x); }
+                }
                 Settings.Remove("InstallPrompt"); Settings.Save();
                 DialogResult = DialogResult.OK;
                 if (!Msg.Test) Close();
@@ -99,6 +113,8 @@ namespace CleanSweep.UI
             body.Controls.Add(L("Removes the app from " + Installer.Dir + ", its Start menu and Desktop shortcuts and its entry in Settings > Apps.", Theme.Body, Theme.Sub, 4));
             if (Installer.PowerShellEdition)
                 body.Controls.Add(L("The PowerShell edition stays installed and gets its shortcuts back. Settings it shares are kept.", Theme.Body, Theme.Warn, 4));
+            else if (PsEdition.Retired)
+                body.Controls.Add(L("The retired PowerShell edition is still kept as a backup in your data folder. Put it back from Settings first if you want to keep using it.", Theme.Body, Theme.Sub, 4));
             RemoveData.Margin = new Padding(0, 12, 0, 2); body.Controls.Add(RemoveData);
             var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 58, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(16, 10, 16, 10), BackColor = Theme.Side };
             bar.Controls.AddRange(new Control[] { Go, Cancel });

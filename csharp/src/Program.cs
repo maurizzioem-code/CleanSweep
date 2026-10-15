@@ -31,6 +31,14 @@ namespace CleanSweep
                 if (args.Length > 3 && args[2] == "--wait") Thread.Sleep(int.Parse(args[3]) * 1000);
                 return 0;
             }
+            // Signature checks used by the build's signing test: --verify-update <file> <version> <result file>
+            if (args.Length > 3 && args[0] == "--verify-update")
+            {
+                var u = new Engine.UpdateInfo { Version = Version.Parse(args[2]), Sha256 = Engine.Updater.Sha256(args[1]) };
+                string why = Engine.Updater.Verify(args[1], u);
+                System.IO.File.WriteAllText(args[3], (why ?? "OK") + "\r\nthis copy: " + Engine.Signing.Check(Application.ExecutablePath) + "\r\nupdate: " + Engine.Signing.Check(args[1]));
+                return why == null ? 0 : 3;
+            }
             bool quiet = Array.IndexOf(args, "--quiet") >= 0;
             int sb = Array.IndexOf(args, "--sandbox"); if (sb >= 0 && sb + 1 < args.Length) Engine.Installer.UseSandbox(args[sb + 1]);
             if (args.Length > 0 && (args[0] == "--install" || args[0] == "--uninstall"))
@@ -50,6 +58,10 @@ namespace CleanSweep
                             var opt = Array.IndexOf(args, "--keep-shortcuts") >= 0 && Engine.Installer.IsInstalled ? Engine.Installer.Options.Current()
                                 : new Engine.Installer.Options { StartMenu = Array.IndexOf(args, "--no-startmenu") < 0, Desktop = Array.IndexOf(args, "--no-desktop") < 0 };
                             Engine.Installer.Install(opt);
+                            // the PowerShell edition's last update runs "--install --quiet --retire-powershell"
+                            if (Array.IndexOf(args, "--retire-powershell") >= 0 && Engine.PsEdition.Present)
+                                try { Engine.PsEdition.Retire(n => true); }
+                                catch (Exception x) { Trace.Write("Retire failed (the PowerShell edition was left as it is): " + x); }
                             if (Array.IndexOf(args, "--no-start") < 0) StartInstalled();
                             return 0;
                         }

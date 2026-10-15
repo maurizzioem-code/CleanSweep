@@ -57,6 +57,7 @@ namespace CleanSweep
                 try { if (repairSaved != null) File.WriteAllText(Repair.ResultFile, repairSaved, new System.Text.UTF8Encoding(true)); else if (File.Exists(Repair.ResultFile)) File.Delete(Repair.ResultFile); } catch { }
                 try
                 {
+                    AutoClean.TaskName = "Automatic cleanup";   // in case a test task was still selected
                     if (taskXml != null) AutoClean.RegisterXml(taskXml); else AutoClean.DeleteTaskOnly();
                     Note(taskXml != null ? "Your automatic cleanup schedule was put back as it was." : "No automatic cleanup schedule was left behind.");
                 }
@@ -907,6 +908,8 @@ namespace CleanSweep
                 about.ShowInstall(); var f = about.OpenInstall; Pump(300);
                 Shot("installer", f);
                 Check(f.Install.Text == "Install" && f.StartMenu.Checked && f.Desktop.Checked, "install window defaults");
+                Check(f.RetirePs.Checked && f.RetirePs.Parent != null, "install window should offer to retire the PowerShell edition");
+                f.RetirePs.Checked = false;   // this test keeps both editions side by side
                 f.DoInstall(); Pump(200);
                 Note("    " + f.Result.Text);
                 Check(f.Installed, "install failed: " + f.Result.Text);
@@ -975,6 +978,101 @@ namespace CleanSweep
             (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey) = real; Installer.TouchSchedule = true;
             try { Directory.Delete(sbx, true); } catch { }
             about.UpdateInstallInfo();
+
+            // ---------------------------------------------------------------- retire the PowerShell edition (sandbox + a separate test task; the real schedule is never touched)
+            {
+                Installer.UseSandbox(sbx); Installer.TouchSchedule = true;
+                string realTask = AutoClean.TaskName; AutoClean.TaskName = "Automatic cleanup (self-test retire)";
+                string data = Installer.DataDir, ps1 = Path.Combine(data, "CleanSweep.ps1"), vbs = Path.Combine(data, "CleanSweep.vbs");
+                string before = null; bool enabledBefore = false; Process psWin = null;
+                dynamic wsh = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));
+                await Step("PowerShell edition: retire it and move its schedule (sandbox)", () =>
+                {
+                    Reset(sbx); Directory.CreateDirectory(data); Directory.CreateDirectory(Installer.StartMenuDir); Directory.CreateDirectory(Installer.DesktopDir);
+                    // a stand-in PowerShell edition 4.3: program files, shared data, its two shortcuts and its scheduled task
+                    File.WriteAllText(ps1, "$Version = \"4.3\"\r\nStart-Sleep -Seconds 120\r\n");
+                    foreach (var f in new[] { "CleanSweep.vbs", "AutoClean.ps1", "AutoClean.vbs", "CleanSweep.ico", "Install.ps1", "CleanSweep.exe" }) File.WriteAllText(Path.Combine(data, f), "stand-in");
+                    Directory.CreateDirectory(Path.Combine(data, "modules")); File.WriteAllText(Path.Combine(data, @"modules\Schedule.ps1"), "stand-in");
+                    File.WriteAllText(Path.Combine(data, "settings.json"), "{\"AutoCheck\":true}"); File.WriteAllText(Path.Combine(data, "autoclean-history.csv"), "Time,Trigger\r\n");
+                    Directory.CreateDirectory(Path.Combine(data, "logs")); File.WriteAllText(Path.Combine(data, @"logs\app.log"), "log");
+                    Installer.MakeLink(Installer.StartMenuLink, Path.Combine(data, "CleanSweep.exe"), data, "CleanSweep");
+                    var dl = wsh.CreateShortcut(Installer.DesktopLink); dl.TargetPath = Environment.ExpandEnvironmentVariables(@"%SystemRoot%\System32\wscript.exe"); dl.Arguments = "\"" + vbs + "\""; dl.Save();
+                    var cfg = new AutoCleanConfig { Freq = "Weekly", Day = "Wednesday", Minutes = 3 * 60 + 17, ACOnly = true, Idle = true, CatchUp = false };
+                    string psXml = AutoClean.TaskXml(cfg, Environment.ExpandEnvironmentVariables(@"%SystemRoot%\System32\wscript.exe"))
+                        .Replace("<Arguments>--autoclean Scheduled</Arguments>", "<Arguments>//B //Nologo \"" + System.Security.SecurityElement.Escape(Path.Combine(data, "AutoClean.vbs")) + "\" Scheduled</Arguments>");
+                    AutoClean.RegisterXml(psXml);
+                    var st0 = AutoClean.State(); before = PsEdition.ScheduleParts(st0.Xml); enabledBefore = st0.Enabled;
+                    Note($"    PowerShell task: {st0.Command}  next run {st0.NextRun:ddd MMM d h:mm tt}");
+                    Check(st0.RunsPowerShellEdition, "test task should look like the PowerShell edition's");
+                    // the new version, installed without a Desktop shortcut (so the PowerShell one stays)
+                    Installer.Install(new Installer.Options { Desktop = false });
+                    form.ShowPage(about); about.UpdatePs(); Pump(150);
+                    Check(PsEdition.Present && about.RetireBtn.Visible && about.RetireBtn.Enabled && PsEdition.Version == "4.3", "Settings should offer to retire 4.3: " + about.PsInfo.Text);
+                    Note("    Settings: " + about.PsInfo.Text);
+                    (about.RetireBtn.Parent?.Parent as ScrollableControl)?.ScrollControlIntoView(about.RetireBtn.Parent); Pump(100);
+                    Shot("ps-edition");
+                    // an open PowerShell edition window: No leaves everything as it was, Yes closes it
+                    psWin = Process.Start(new ProcessStartInfo(ConsoleTool.SysExe(@"WindowsPowerShell\v1.0\powershell.exe"), $"-NoProfile -WindowStyle Hidden -File \"{ps1}\"") { UseShellExecute = false, CreateNoWindow = true });
+                    var sw = Stopwatch.StartNew(); while (PsEdition.Running().Count == 0 && sw.ElapsedMilliseconds < 15000) Pump(250);
+                    Check(PsEdition.Running().Count == 1, "open PowerShell edition not detected");
+                    bool threw = false; try { PsEdition.Retire(n => false); } catch (OperationCanceledException) { threw = true; }
+                    Check(threw && PsEdition.Present && AutoClean.State().RunsPowerShellEdition, "saying No should change nothing");
+                    int asked = 0; var log = PsEdition.Retire(n => { asked = n; return true; });
+                    foreach (var l in log) Note("    " + l);
+                    Check(asked == 1 && psWin.WaitForExit(5000), "open PowerShell edition was not closed");
+                    // schedule: same triggers, conditions and account, now runs the new version's own copy
+                    var st = AutoClean.State(); Note($"    task now: {st.Command}  next run {st.NextRun:ddd MMM d h:mm tt}");
+                    Check(!st.RunsPowerShellEdition && st.Command.StartsWith(PsEdition.RunnerExe, StringComparison.OrdinalIgnoreCase) && st.Command.EndsWith("--autoclean Scheduled"), "task does not run the new version");
+                    Check(PsEdition.ScheduleParts(st.Xml) == before && st.Enabled == enabledBefore, "days, time or conditions changed");
+                    Check(File.Exists(PsEdition.RunnerExe) && Installer.VersionOf(PsEdition.RunnerExe) == Installer.MyVersion, "runner copy missing");
+                    // program files moved, data kept
+                    Check(!PsEdition.Present && PsEdition.Retired && File.Exists(Path.Combine(PsEdition.OldDir, @"modules\Schedule.ps1")) && File.Exists(Path.Combine(PsEdition.OldDir, "READ ME.txt")), "program files not moved");
+                    foreach (var f in new[] { "CleanSweep.vbs", "AutoClean.ps1", "CleanSweep.exe", "Install.ps1" }) Check(!File.Exists(Path.Combine(data, f)), f + " left behind");
+                    foreach (var f in new[] { "settings.json", "autoclean-history.csv", @"logs\app.log" }) Check(File.Exists(Path.Combine(data, f)), f + " should be kept");
+                    // shortcuts
+                    Check(string.Equals(Shortcuts.Target(Installer.StartMenuLink), Installer.Exe, StringComparison.OrdinalIgnoreCase), "Start menu shortcut should open the new version");
+                    Check(!File.Exists(Installer.DesktopLink) && File.Exists(Path.Combine(PsEdition.OldDir, @"shortcuts\desktop.lnk")), "PowerShell Desktop shortcut not moved");
+                    Check(!File.Exists(Path.Combine(Installer.BackupDir, "start.lnk")) && File.Exists(Path.Combine(PsEdition.OldDir, @"shortcuts\start.lnk")), "installer's shortcut backup not moved");
+                    about.UpdatePs(); Pump(100); Note("    Settings: " + about.PsInfo.Text);
+                    Check(about.RestoreBtn.Visible && about.DeleteOldBtn.Visible && !about.RetireBtn.Visible, "Settings not updated");
+                    (about.RestoreBtn.Parent?.Parent as ScrollableControl)?.ScrollControlIntoView(about.RestoreBtn.Parent); Pump(100);
+                    Shot("ps-retired");
+                });
+                try { psWin?.Kill(); } catch { }
+                await Step("PowerShell edition: put it back, then retire it from the installer (sandbox)", () =>
+                {
+                    var log = PsEdition.Restore(); foreach (var l in log) Note("    " + l);
+                    Check(PsEdition.Present && !Directory.Exists(PsEdition.OldDir) && File.Exists(Path.Combine(data, @"modules\Schedule.ps1")), "files not put back");
+                    Check(File.Exists(Installer.DesktopLink) && Shortcuts.Arguments(Installer.DesktopLink).Contains(vbs), "Desktop shortcut not put back");
+                    Check(File.Exists(Path.Combine(Installer.BackupDir, "start.lnk")), "Start menu shortcut should be kept for an uninstall");
+                    Check(!AutoClean.State().RunsPowerShellEdition, "schedule should stay on the new version");
+                    // the PowerShell edition's last update runs this
+                    using (var p = StartInstalled($"--install --quiet --retire-powershell --no-start --sandbox \"{sbx}\"")) { p.WaitForExit(60000); Note($"    --install --quiet --retire-powershell: exit code {p.ExitCode}"); }
+                    Check(PsEdition.Retired, "not retired by the installer");
+                    about.UpdatePs(); Pump(100);
+                    long size = PsEdition.OldSize; about.DeleteOldPs(); Pump(100);
+                    Check(!Directory.Exists(PsEdition.OldDir) && !about.RestoreBtn.Visible, "old copy not deleted");
+                    Note($"    deleted the old copy ({Fmt.Size(size)}); section hidden: {!about.PsInfo.Visible}");
+                });
+                AutoClean.DeleteTaskOnly(); AutoClean.TaskName = realTask; Installer.TouchSchedule = false;   // the sandbox uninstall must never look at the real task
+                foreach (var p in Installer.RunningCopies()) try { p.Kill(); } catch { }
+                try { Installer.Uninstall(true); } catch { }
+                try { Registry.CurrentUser.DeleteSubKeyTree(Installer.UninstallKey, false); } catch { }
+                (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey) = real; Installer.TouchSchedule = true;
+                try { Directory.Delete(sbx, true); } catch { }
+                about.UpdatePs(); about.UpdateInstallInfo();
+            }
+            await Step("Signing: this copy's digital signature and the update rule", () =>
+            {
+                var me = Signing.Check(Installer.Source); Note("    this copy: " + me + (me.Signed ? $" | {me.Subject}" : ""));
+                Note("    Settings shows: " + about.Publisher.Text);
+                Check(!me.Signed || me.Trusted, "this copy's signature is not valid: " + me.Problem);
+                Check(Signing.UpdateProblem(Installer.Source, Installer.Source) == null, "the same file should always pass");
+                var np = Path.Combine(Path.GetDirectoryName(Installer.Source), "CleanSweep-next.exe");
+                if (File.Exists(np)) { var n = Signing.Check(np); Note("    CleanSweep-next.exe: " + n); Check(Signing.UpdateProblem(Installer.Source, np) == null, "next build would be refused: " + Signing.UpdateProblem(Installer.Source, np)); }
+                var notExe = Path.Combine(CleanEngine.MyTemp, "CleanSweepSigTest.txt"); File.WriteAllText(notExe, "x");
+                Check(!Signing.Check(notExe).Signed, "a text file can't be signed"); File.Delete(notExe);
+            });
 
             // ---------------------------------------------------------------- updates (local update files; the sandbox install from above)
             string updDir = Path.Combine(CleanEngine.MyTemp, "CleanSweepUpdateTest");

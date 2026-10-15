@@ -69,7 +69,9 @@ namespace CleanSweep.Engine
     /// </summary>
     public static class AutoClean
     {
-        public const string TaskFolder = @"\CleanSweep", TaskName = "Automatic cleanup";
+        public const string TaskFolder = @"\CleanSweep";
+        /// <summary>The self-test swaps this for a test task so the user's real schedule is never touched.</summary>
+        public static string TaskName = "Automatic cleanup";
         public static readonly string HistoryFile = Path.Combine(AppPaths.Dir, "autoclean-history.csv");
         public static readonly string LogFile = Path.Combine(AppPaths.Logs, "autoclean.log");
         /// <summary>The scheduled task runs this copy, so moving or deleting the downloaded exe doesn't break the schedule.</summary>
@@ -195,6 +197,7 @@ namespace CleanSweep.Engine
         /// <summary>True when a laptop is running on battery (desktops and plugged-in laptops return false).</summary>
         public static bool OnBattery => System.Windows.Forms.SystemInformation.PowerStatus.PowerLineStatus == System.Windows.Forms.PowerLineStatus.Offline;
         public static void RunTaskNow() { var t = GetTask(); if (t == null) throw new Exception("task not found"); t.Run(null); }
+        public static void SetEnabled(bool on) { var t = GetTask(); if (t != null) t.Enabled = on; }
         public static void DeleteTaskOnly() { try { Service().GetFolder(TaskFolder).DeleteTask(TaskName, 0); } catch { } }
 
         /// <summary>Deletes the scheduled task (nothing is left behind in Task Scheduler).</summary>

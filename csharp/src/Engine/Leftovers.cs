@@ -50,6 +50,10 @@ namespace CleanSweep.Engine
         {
             try { return Environment.ExpandEnvironmentVariables((string)Shell.CreateShortcut(lnk).TargetPath ?? ""); } catch { return null; }
         }
+        public static string Arguments(string lnk)
+        {
+            try { return (string)Shell.CreateShortcut(lnk).Arguments ?? ""; } catch { return null; }
+        }
         /// <summary>Creates a shortcut (used by the self-test).</summary>
         public static void Create(string lnk, string target) { var s = Shell.CreateShortcut(lnk); s.TargetPath = target; s.Save(); }
 

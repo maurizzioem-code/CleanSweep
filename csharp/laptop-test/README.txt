@@ -41,3 +41,8 @@ What the test does on your PC:
   wrong build, plain http) are refused, then installs CleanSweep-next.exe over a test copy
   in Temp. Your real Start menu, Settings > Apps and installed CleanSweep are not changed.
   It only reads the real update file on GitHub, it never installs from it.
+- PowerShell edition: makes a stand-in PowerShell edition and a test task named
+  "Automatic cleanup (self-test retire)" in a test folder, retires it, puts it back and
+  retires it again. Your real PowerShell edition, its shortcuts and your real automatic
+  cleanup schedule are not touched - retire the real one yourself from Settings when ready.
+- Signing: shows whether CleanSweep is digitally signed and checks the update signature rule.

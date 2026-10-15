@@ -20,6 +20,7 @@ EOF
 )
 mkdir -p releases/csharp update
 cp "$T/CleanSweep.exe" "releases/csharp/CleanSweep-$VER.exe"
+cp "$T/CleanSweep.exe" "releases/csharp/CleanSweep.exe"      # the download link in README.md (always the latest)
 SHA=$(sha256sum "releases/csharp/CleanSweep-$VER.exe" | cut -d' ' -f1 | tr a-f A-F)
 SIZE=$(stat -c %s "releases/csharp/CleanSweep-$VER.exe")
 python3 -c "import json,sys;json.dump({'version':sys.argv[1],'url':'https://raw.githubusercontent.com/$R/main/releases/csharp/CleanSweep-'+sys.argv[1]+'.exe','sha256':sys.argv[2],'size':int(sys.argv[3]),'notes':sys.argv[4]},open('update/csharp.json','w'),indent=2)" "$VER" "$SHA" "$SIZE" "$NOTES"

@@ -37,7 +37,7 @@ namespace CleanSweep.Engine
             DataDir = Path.Combine(root, @"Data\CleanSweep"); UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\CleanSweepSelfTestInstall"; TouchSchedule = false;
         }
         public static string Exe => Path.Combine(Dir, "CleanSweep.exe");
-        static string BackupDir => Path.Combine(Dir, "previous shortcuts");
+        public static string BackupDir => Path.Combine(Dir, "previous shortcuts");
         public static string StartMenuLink => Path.Combine(StartMenuDir, LinkName);
         public static string DesktopLink => Path.Combine(DesktopDir, LinkName);
 
@@ -46,11 +46,11 @@ namespace CleanSweep.Engine
         {
             try { var v = FileVersionInfo.GetVersionInfo(exe); return new Version(v.FileMajorPart, v.FileMinorPart, v.FileBuildPart, v.FilePrivatePart); } catch { return null; }
         }
-        public static string VersionLabel(Version v) => v == null ? "?" : $"{v.Major}.{v.Minor} preview (build {v.Revision})";
+        public static string VersionLabel(Version v) => v == null ? "?" : $"{v.Major}.{v.Minor} (build {v.Revision})";
 
         public static bool IsInstalled => File.Exists(Exe);
         public static bool RunningInstalled => string.Equals(Path.GetFullPath(Source), Path.GetFullPath(Exe), StringComparison.OrdinalIgnoreCase);
-        public static bool PowerShellEdition => File.Exists(Path.Combine(DataDir, "CleanSweep.ps1"));
+        public static bool PowerShellEdition => PsEdition.Present;
         public static Version InstalledVersion => IsInstalled ? VersionOf(Exe) : null;
         /// <summary>The copy being run is newer than the installed one (or nothing is installed).</summary>
         public static bool Newer { get { var iv = InstalledVersion; return iv == null || MyVersion > iv; } }

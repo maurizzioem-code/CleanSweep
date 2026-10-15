@@ -18,8 +18,11 @@ namespace CleanSweep.Pages
                 Margin = new Padding(0, top, 0, 6), UseMnemonic = false
             };
             flow.Controls.Add(L("CleanSweep " + Program.VersionText, Theme.Title));
-            flow.Controls.Add(L("C# edition (preview). This is the new native version of CleanSweep, being rebuilt page by page. " +
-                                "It is faster and stays responsive while it works.", null, Theme.Sub));
+            flow.Controls.Add(L("The native Windows version of CleanSweep. It replaces the PowerShell edition (4.x): " +
+                                "faster, stays responsive while it works, and uses the same settings and history.", null, Theme.Sub));
+            Publisher = L("", null, Theme.Sub); flow.Controls.Add(Publisher);
+            var sig = Signing.Check(Installer.Source);
+            Publisher.Text = sig.Signed && sig.Trusted ? "Publisher: " + sig.Publisher + " (digitally signed)" : sig.Signed ? "Digital signature: " + sig.Problem : "Not digitally signed yet, so Windows may show \"Unknown publisher\" or a SmartScreen warning.";
             flow.Controls.Add(L("Updates", Theme.Section, null, 18));
             UpdStatus = L("Updates have not been checked yet.", null, null); flow.Controls.Add(UpdStatus);
             UpdNotes = L("", null, Theme.Sub); flow.Controls.Add(UpdNotes);
@@ -40,7 +43,15 @@ namespace CleanSweep.Pages
             InstallBtn.Click += (s, e) => ShowInstall();
             UninstallBtn.Click += (s, e) => ShowUninstall();
             OpenFolder.Click += (s, e) => Shell.Open("explorer.exe", "\"" + Installer.Dir + "\"");
-            flow.Controls.Add(L("Ready in this preview", Theme.Section, null, 18));
+            var psTitle = L("PowerShell edition", Theme.Section, null, 18); flow.Controls.Add(psTitle);
+            PsInfo = L("", null, Theme.Sub); flow.Controls.Add(PsInfo);
+            var pb = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 4, 0, 6), MaximumSize = new Size(700, 0) };
+            pb.Controls.AddRange(new Control[] { RetireBtn, RestoreBtn, DeleteOldBtn });
+            flow.Controls.Add(pb); PsControls = new Control[] { psTitle, PsInfo, pb };
+            RetireBtn.Click += (s, e) => RetirePs();
+            RestoreBtn.Click += (s, e) => RestorePs();
+            DeleteOldBtn.Click += (s, e) => DeleteOldPs();
+            flow.Controls.Add(L("What's in CleanSweep 5.0", Theme.Section, null, 18));
             flow.Controls.Add(L("- Dashboard: health score and history, recommendations, live hardware monitor, Quick clean and Restore point"));
             flow.Controls.Add(L("- Shortcuts: broken shortcuts on the Desktop and Start menu (to the Recycle Bin)"));
             flow.Controls.Add(L("- Network: connection test, safe fixes that only restore Windows defaults, Wi-Fi channels, Ethernet diagnostics"));
@@ -53,11 +64,62 @@ namespace CleanSweep.Pages
             flow.Controls.Add(L("- Installer: per-user install with Start menu and Desktop shortcuts, listed in Settings > Apps"));
             flow.Controls.Add(L("- Updates: checks GitHub once a day, verifies each download's fingerprint before installing it"));
             flow.Controls.Add(L("Settings", Theme.Section, null, 18));
-            flow.Controls.Add(L("Shared with the main app: " + AppPaths.Settings, null, Theme.Sub));
+            flow.Controls.Add(L("Settings file: " + AppPaths.Settings, null, Theme.Sub));
             flow.Controls.Add(L("Your ignore list, file age and Recycle Bin choices are the same in both editions.", null, Theme.Sub));
             Controls.Add(flow);
             UpdateInstallInfo();
             ShowUpdate();
+            UpdatePs();
+        }
+
+        public Label Publisher, PsInfo;
+        Control[] PsControls;
+        public readonly CsButton RetireBtn = new CsButton("Retire the PowerShell edition...", true), RestoreBtn = new CsButton("Put it back"), DeleteOldBtn = new CsButton("Delete the old copy");
+
+        public void UpdatePs()
+        {
+            bool present = PsEdition.Present, retired = PsEdition.Retired;
+            foreach (var c in PsControls) c.Visible = present || retired;
+            RetireBtn.Visible = present; RestoreBtn.Visible = DeleteOldBtn.Visible = retired;
+            RetireBtn.Enabled = Installer.IsInstalled;
+            var st = AutoClean.State();
+            string sched = !st.Exists ? "No automatic cleanup is scheduled." : st.RunsPowerShellEdition ? "Its automatic cleanup schedule still runs the PowerShell edition." : "The automatic cleanup runs this version.";
+            if (present)
+                PsInfo.Text = $"The PowerShell edition ({PsEdition.Version}) is still on this PC in {Installer.DataDir}. {sched} " +
+                    (Installer.IsInstalled ? "Retiring it moves the schedule here (same days, time and conditions) and keeps its program files as a backup you can put back."
+                                           : "Install this version first (above), then retire it.");
+            else if (retired)
+            {
+                DateTime.TryParse(Settings.GetString("PsEditionRetired"), out var when);
+                PsInfo.Text = $"Retired{(when.Year > 2000 ? " on " + when.ToString("MMMM d, yyyy") : "")}. {sched} A backup of version {PsEdition.Version} ({Fmt.Size(PsEdition.OldSize)}) is kept in \"{PsEdition.OldDir}\".";
+            }
+        }
+
+        public void RetirePs()
+        {
+            if (!Msg.Confirm("Retire the PowerShell edition?\n\n- The automatic cleanup moves to this version, with the same days, time and conditions.\n" +
+                             "- Its program files and shortcuts move to a backup folder (nothing is deleted).\n- Your settings, history, logs and registry backups stay where they are.\n\nYou can put it back from this page.", "Retire the PowerShell edition")) return;
+            try
+            {
+                var log = PsEdition.Retire(n => Msg.Confirm("The PowerShell edition of CleanSweep is open. Close it so it can be retired?", "Retire the PowerShell edition"));
+                Msg.Show("The PowerShell edition was retired.\n\n- " + string.Join("\n- ", log), "CleanSweep", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (OperationCanceledException) { Msg.Show("Nothing was changed. Close the PowerShell edition, then try again.", "CleanSweep"); }
+            catch (Exception e) { Trace.Write("Retire failed: " + e); Msg.Show("The PowerShell edition could not be retired: " + e.Message, "CleanSweep", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            UpdatePs(); UpdateInstallInfo(); Program.Form?.Page<DashboardPage>()?.UpdateAutoCleanCard();
+        }
+        public void RestorePs()
+        {
+            if (!Msg.Confirm("Put the PowerShell edition back?\n\nIts program files and shortcuts return. The automatic cleanup keeps running this version with the same schedule.", "PowerShell edition")) return;
+            try { var log = PsEdition.Restore(); Msg.Show("The PowerShell edition is back.\n\n- " + string.Join("\n- ", log), "CleanSweep", MessageBoxButtons.OK, MessageBoxIcon.Information); }
+            catch (Exception e) { Trace.Write("Restore failed: " + e); Msg.Show("Could not put it back: " + e.Message, "CleanSweep", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            UpdatePs();
+        }
+        public void DeleteOldPs()
+        {
+            if (!Msg.Confirm($"Delete the old PowerShell edition ({Fmt.Size(PsEdition.OldSize)}) for good?\n\nYour settings and history are not affected.", "PowerShell edition")) return;
+            try { PsEdition.DeleteOld(); } catch (Exception e) { Msg.Show("Could not delete it: " + e.Message, "CleanSweep", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            UpdatePs();
         }
 
         public Label UpdStatus, UpdNotes;

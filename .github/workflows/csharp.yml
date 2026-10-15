@@ -3,10 +3,14 @@ on:
   workflow_dispatch:
   push:
     paths: ["csharp/**", ".github/workflows/csharp.yml"]
+# id-token lets the build sign in to Azure Artifact Signing without a stored password (OpenID Connect)
+permissions:
+  id-token: write
+  contents: read
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Build CleanSweep (C#)
@@ -21,8 +25,67 @@ jobs:
           dotnet build csharp\CleanSweep.csproj -c Release -nologo -p:Version=5.0.0.${{ github.run_number }}
           if ($LASTEXITCODE) { exit 1 }
           Copy-Item $env:RUNNER_TEMP\CleanSweep-next.exe csharp\bin\Release\CleanSweep-next.exe
+          # unsigned copies for the signature test below
+          New-Item -ItemType Directory $env:RUNNER_TEMP\unsigned -Force | Out-Null
+          Copy-Item csharp\bin\Release\CleanSweep.exe, csharp\bin\Release\CleanSweep-next.exe $env:RUNNER_TEMP\unsigned\
           (Get-Item csharp\bin\Release\CleanSweep.exe).VersionInfo.FileVersion; (Get-Item csharp\bin\Release\CleanSweep-next.exe).VersionInfo.FileVersion
           Get-Item csharp\bin\Release\CleanSweep.exe | Format-List Name, Length, LastWriteTime
+      # ------------------------------------------------------------ code signing (runs once Azure Artifact Signing is set up)
+      # Repository variables: AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE
+      # Repository secrets:   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (an app with a federated credential for this repo)
+      - name: Azure login (for code signing)
+        if: vars.AZURE_SIGNING_ACCOUNT != ''
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign CleanSweep.exe (Azure Artifact Signing)
+        if: vars.AZURE_SIGNING_ACCOUNT != ''
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files: |
+            ${{ github.workspace }}\csharp\bin\Release\CleanSweep.exe
+            ${{ github.workspace }}\csharp\bin\Release\CleanSweep-next.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Digital signatures
+        shell: powershell
+        run: |
+          foreach ($f in "CleanSweep.exe", "CleanSweep-next.exe") {
+            $s = Get-AuthenticodeSignature "csharp\bin\Release\$f"
+            "$f : $($s.Status)  $($s.SignerCertificate.Subject)  timestamp: $([bool]$s.TimeStamperCertificate)"
+          }
+          if ("${{ vars.AZURE_SIGNING_ACCOUNT }}" -and (Get-AuthenticodeSignature csharp\bin\Release\CleanSweep.exe).Status -ne "Valid") { "signing is set up but the exe is not validly signed"; exit 1 }
+      - name: Update signature rule (throwaway test certificates on this test machine)
+        timeout-minutes: 5
+        shell: powershell
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP "sigtest"; New-Item -ItemType Directory $d -Force | Out-Null
+          $u = Join-Path $env:RUNNER_TEMP "unsigned"
+          $next = (Get-Item "$u\CleanSweep-next.exe").VersionInfo; $nv = "$($next.FileMajorPart).$($next.FileMinorPart).$($next.FileBuildPart).$($next.FilePrivatePart)"
+          $certs = foreach ($n in "CleanSweep Test Publisher", "Someone Else") { New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=$n" -CertStoreLocation Cert:\CurrentUser\My }
+          foreach ($c in $certs) { $cer = Join-Path $d "$($c.Thumbprint).cer"; Export-Certificate -Cert $c -FilePath $cer | Out-Null
+            foreach ($st in "Root", "TrustedPublisher") { Import-Certificate -FilePath $cer -CertStoreLocation "Cert:\LocalMachine\$st" | Out-Null } }
+          function Copy-As($from, $name, $cert) { $t = Join-Path $d $name; Copy-Item "$u\$from" $t; if ($cert) { $r = Set-AuthenticodeSignature -FilePath $t -Certificate $cert -HashAlgorithm SHA256; if ($r.Status -ne "Valid") { throw "signing $name failed: $($r.StatusMessage)" } }; $t }
+          $curS = Copy-As CleanSweep.exe cur-signed.exe $certs[0]; $curU = Copy-As CleanSweep.exe cur-unsigned.exe $null
+          $nS = Copy-As CleanSweep-next.exe next-signed.exe $certs[0]; $nU = Copy-As CleanSweep-next.exe next-unsigned.exe $null
+          $nO = Copy-As CleanSweep-next.exe next-other.exe $certs[1]; $nT = Copy-As CleanSweep-next.exe next-tampered.exe $certs[0]
+          $b = [IO.File]::ReadAllBytes($nT); $i = [int]($b.Length / 3); $b[$i] = $b[$i] -bxor 0xFF; [IO.File]::WriteAllBytes($nT, $b)
+          $bad = 0
+          foreach ($c in @(@($curS, $nS, 0), @($curS, $nU, 3), @($curS, $nO, 3), @($curS, $nT, 3), @($curU, $nS, 0), @($curU, $nU, 0), @($curU, $nT, 3))) {
+            $out = Join-Path $d "result.txt"; Remove-Item $out -ErrorAction SilentlyContinue
+            $p = Start-Process $c[0] -ArgumentList "--verify-update", "`"$($c[1])`"", $nv, "`"$out`"" -PassThru -Wait
+            $ok = $p.ExitCode -eq $c[2]; if (-not $ok) { $bad++ }
+            "$(if ($ok) {'PASS'} else {'FAIL'})  $(Split-Path -Leaf $c[0]) -> $(Split-Path -Leaf $c[1]): exit $($p.ExitCode) (expected $($c[2]))"
+            if (Test-Path $out) { Get-Content $out | ForEach-Object { "      $_" } }
+          }
+          foreach ($c in $certs) { foreach ($st in "Root", "TrustedPublisher", "My") { Get-ChildItem "Cert:\LocalMachine\$st\$($c.Thumbprint)", "Cert:\CurrentUser\$st\$($c.Thumbprint)" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue } }
+          "problems: $bad"; if ($bad) { exit 1 }
       - name: Visual Studio leftovers check (read-only tool)
         timeout-minutes: 3
         shell: cmd
@@ -74,6 +137,55 @@ jobs:
           foreach ($i in 1..40) { if (-not (Test-Path (Split-Path $inst))) { break }; Start-Sleep -Milliseconds 500 }
           foreach ($x in (Split-Path $inst), $lnk, $desk, $key) { if (Test-Path $x) { "LEFT BEHIND: $x"; $bad++ } }
           if (Test-Path (Join-Path $env:LOCALAPPDATA "CleanSweep")) { "kept data folder: $env:LOCALAPPDATA\CleanSweep" }
+          "problems: $bad"; if ($bad) { exit 1 }
+      - name: Retire a real PowerShell edition (the way its last update does it)
+        timeout-minutes: 8
+        shell: powershell
+        run: |
+          $bad = 0; $data = Join-Path $env:LOCALAPPDATA "CleanSweep"; $wsh = New-Object -ComObject WScript.Shell
+          # 1. install the real PowerShell edition 4.3 from its published package; it opens its window
+          $ps = Join-Path $env:RUNNER_TEMP "ps43"; Expand-Archive releases\CleanSweep-4.3.zip $ps -Force
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$ps\CleanSweep\Install.ps1" -Quiet
+          Start-Sleep -Seconds 8
+          $psWin = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like "*CleanSweep.ps1*" })
+          "PowerShell edition $((Select-String "$data\CleanSweep.ps1" -Pattern '^\$Version = "(.+)"').Matches.Groups[1].Value) installed, windows open: $($psWin.Count)"
+          # 2. its automatic cleanup, made the way its Schedule.ps1 makes it
+          $act = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\wscript.exe" -Argument "//B //Nologo `"$data\AutoClean.vbs`" Scheduled" -WorkingDirectory $data
+          $tr = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Wednesday -At "3:17 AM"
+          $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries:$false -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+          $pr = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Highest
+          Register-ScheduledTask -TaskPath "\CleanSweep\" -TaskName "Automatic cleanup" -Action $act -Trigger $tr -Settings $set -Principal $pr -Force | Out-Null
+          $before = Get-ScheduledTask -TaskPath "\CleanSweep\" -TaskName "Automatic cleanup"
+          "task before: $($before.Actions[0].Execute) $($before.Actions[0].Arguments)  next: $((Get-ScheduledTaskInfo $before).NextRunTime)"
+          # 3. the last update package, run the way the PowerShell edition's updater runs it
+          $pkg = Join-Path $env:RUNNER_TEMP "bridge\CleanSweep"; New-Item -ItemType Directory $pkg -Force | Out-Null
+          Copy-Item csharp\bin\Release\CleanSweep.exe, csharp\bridge\Install.ps1 $pkg
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$pkg\Install.ps1" -Quiet
+          "update package finished in $([int]$sw.Elapsed.TotalSeconds)s"; Get-Content "$data\logs\move-to-5.0.log" | ForEach-Object { "  log: $_" }
+          Start-Sleep -Seconds 3
+          # 4. results
+          $inst = Join-Path $env:LOCALAPPDATA "Programs\CleanSweep\CleanSweep.exe"
+          if (Test-Path $inst) { "installed: $inst $((Get-Item $inst).VersionInfo.FileVersion)" } else { "MISSING installed exe"; $bad++ }
+          foreach ($f in "CleanSweep.ps1", "CleanSweep.vbs", "AutoClean.ps1", "CleanSweep.exe", "modules") { if (Test-Path "$data\$f") { "NOT MOVED: $f"; $bad++ } }
+          if (Test-Path "$data\old PowerShell edition\CleanSweep.ps1") { "backup: $data\old PowerShell edition ($((Get-ChildItem "$data\old PowerShell edition" -Recurse -File).Count) files)" } else { "MISSING backup"; $bad++ }
+          if (@(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like "*CleanSweep.ps1*" }).Count) { "PowerShell edition still open"; $bad++ }
+          $after = Get-ScheduledTask -TaskPath "\CleanSweep\" -TaskName "Automatic cleanup"
+          "task after: $($after.Actions[0].Execute) $($after.Actions[0].Arguments)  next: $((Get-ScheduledTaskInfo $after).NextRunTime)"
+          if ($after.Actions[0].Execute -ne "$data\bin\CleanSweep.exe" -or $after.Actions[0].Arguments -ne "--autoclean Scheduled") { "task does not run the new version"; $bad++ }
+          if ($after.Triggers[0].StartBoundary -ne $before.Triggers[0].StartBoundary -or $after.Triggers[0].DaysOfWeek -ne $before.Triggers[0].DaysOfWeek -or $after.Settings.DisallowStartIfOnBatteries -ne $before.Settings.DisallowStartIfOnBatteries) { "schedule changed"; $bad++ }
+          foreach ($l in (Join-Path ([Environment]::GetFolderPath('Programs')) "CleanSweep.lnk"), (Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) "CleanSweep.lnk")) {
+            $t = if (Test-Path $l) { $wsh.CreateShortcut($l).TargetPath } else { "(none)" }; "shortcut $(Split-Path -Leaf (Split-Path $l)): $t"; if ($t -ne $inst) { $bad++ } }
+          $new = @(Get-Process CleanSweep -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $inst }); "new CleanSweep window open: $($new.Count -gt 0)"; if (-not $new.Count) { $bad++ }
+          # 5. the moved schedule really runs the new version
+          $hist = "$data\autoclean-history.csv"; $n0 = if (Test-Path $hist) { @(Import-Csv $hist | Where-Object Trigger -eq Scheduled).Count } else { 0 }
+          Start-ScheduledTask -TaskPath "\CleanSweep\" -TaskName "Automatic cleanup"
+          foreach ($i in 1..60) { Start-Sleep 2; $n1 = if (Test-Path $hist) { @(Import-Csv $hist | Where-Object Trigger -eq Scheduled).Count } else { 0 }; if ($n1 -gt $n0) { break } }
+          "scheduled runs recorded: $n0 -> $n1  (last result 0x$('{0:X}' -f (Get-ScheduledTaskInfo $after).LastTaskResult))"; if ($n1 -le $n0) { $bad++ }
+          # 6. tidy up the test machine
+          $new | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Process $inst -ArgumentList "--uninstall", "--quiet", "--remove-data" -Wait
+          Unregister-ScheduledTask -TaskPath "\CleanSweep\" -TaskName "Automatic cleanup" -Confirm:$false -ErrorAction SilentlyContinue
           "problems: $bad"; if ($bad) { exit 1 }
       - uses: actions/upload-artifact@v4
         if: always()

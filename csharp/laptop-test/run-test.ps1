@@ -4,6 +4,7 @@ $exe = Join-Path $here 'CleanSweep-CSharp-preview.exe'
 if (-not (Test-Path $exe)) { $exe = (Get-ChildItem $here -Filter 'CleanSweep*.exe' | Select-Object -First 1).FullName }
 if (-not $exe) { Write-Host 'CleanSweep-CSharp-preview.exe was not found next to this file. Extract the whole zip first.' -ForegroundColor Red; exit 1 }
 Unblock-File $exe -ErrorAction SilentlyContinue
+Get-ChildItem $here -Filter 'CleanSweep*.exe' | Unblock-File -ErrorAction SilentlyContinue
 $desk = [Environment]::GetFolderPath('Desktop')
 $out = Join-Path $desk 'CleanSweep test results'
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }

@@ -60,6 +60,14 @@ namespace CleanSweep.UI
             nav.AddRange(items);
             var stack = new List<Control> { brand }; stack.AddRange(items);
             Ui.Stack(side, stack.ToArray());
+            UpdateNotice = new Label
+            {
+                Dock = DockStyle.Bottom, Height = 46, Visible = false, Cursor = Cursors.Hand, UseMnemonic = false,
+                ForeColor = Theme.Accent, Font = Theme.UiFont(9, FontStyle.Bold), Padding = new Padding(20, 4, 8, 0)
+            };
+            UpdateNotice.Click += (s, e) => { var a = Pages.FirstOrDefault(p => p is Pages.AboutPage); if (a != null) ShowPage(a); };
+            Engine.Updater.Changed += () => { if (IsHandleCreated) BeginInvoke((Action)ShowUpdateNotice); else ShowUpdateNotice(); };
+            side.Controls.Add(UpdateNotice);
             side.Controls.Add(new Label
             {
                 Dock = DockStyle.Bottom, Height = 40, Text = "Monitor - Clean - Repair\nNothing changes without your click",
@@ -87,6 +95,14 @@ namespace CleanSweep.UI
         public T Page<T>() where T : Page => Pages.OfType<T>().FirstOrDefault();
 
         /// <summary>Sidebar entry: icon + name, rounded highlight and accent bar when selected.</summary>
+        public Label UpdateNotice;
+        public void ShowUpdateNotice()
+        {
+            var u = Engine.Updater.Available;
+            UpdateNotice.Text = u == null ? "" : $"Update available\nBuild {u.Version.Revision} - see Settings";
+            UpdateNotice.Visible = u != null;
+        }
+
         class NavItem : Panel
         {
             readonly MainForm form; readonly Page page; bool hover;

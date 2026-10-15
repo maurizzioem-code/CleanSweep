@@ -13,8 +13,15 @@ jobs:
         shell: powershell
         run: |
           dotnet --version
+          # a "next build" first, so the self-test can install a real newer version over the current one
+          $next = 10000 + ${{ github.run_number }}
+          dotnet build csharp\CleanSweep.csproj -c Release -nologo -p:Version=5.0.0.$next
+          if ($LASTEXITCODE) { exit 1 }
+          Copy-Item csharp\bin\Release\CleanSweep.exe $env:RUNNER_TEMP\CleanSweep-next.exe
           dotnet build csharp\CleanSweep.csproj -c Release -nologo -p:Version=5.0.0.${{ github.run_number }}
           if ($LASTEXITCODE) { exit 1 }
+          Copy-Item $env:RUNNER_TEMP\CleanSweep-next.exe csharp\bin\Release\CleanSweep-next.exe
+          (Get-Item csharp\bin\Release\CleanSweep.exe).VersionInfo.FileVersion; (Get-Item csharp\bin\Release\CleanSweep-next.exe).VersionInfo.FileVersion
           Get-Item csharp\bin\Release\CleanSweep.exe | Format-List Name, Length, LastWriteTime
       - name: Visual Studio leftovers check (read-only tool)
         timeout-minutes: 3
@@ -39,7 +46,7 @@ jobs:
         shell: powershell
         run: |
           $kit = Join-Path $PWD "laptop-kit"; New-Item -ItemType Directory $kit -Force | Out-Null
-          Copy-Item csharp\laptop-test\* $kit; Copy-Item csharp\bin\Release\CleanSweep.exe (Join-Path $kit "CleanSweep-CSharp-preview.exe")
+          Copy-Item csharp\laptop-test\* $kit; Copy-Item csharp\bin\Release\CleanSweep.exe (Join-Path $kit "CleanSweep-CSharp-preview.exe"); Copy-Item csharp\bin\Release\CleanSweep-next.exe $kit
           powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kit "run-test.ps1")
           $zip = Join-Path ([Environment]::GetFolderPath('Desktop')) 'CleanSweep test results.zip'
           if (-not (Test-Path $zip)) { "results zip missing"; exit 1 }
@@ -76,4 +83,4 @@ jobs:
         with: { name: laptop-kit-results, path: "CleanSweep test results.zip" }
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: CleanSweep-csharp-exe, path: csharp/bin/Release/CleanSweep.exe }
+        with: { name: CleanSweep-csharp-exe, path: "csharp/bin/Release/CleanSweep*.exe" }

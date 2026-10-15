@@ -41,9 +41,15 @@ namespace CleanSweep
                 {
                     if (args[0] == "--install")
                     {
+                        // an update: wait until the old window has closed so its exe can be replaced
+                        int wp = Array.IndexOf(args, "--wait-pid");
+                        if (wp >= 0 && wp + 1 < args.Length && int.TryParse(args[wp + 1], out int pid))
+                            try { using (var old = System.Diagnostics.Process.GetProcessById(pid)) old.WaitForExit(60000); } catch { }
                         if (quiet)
                         {
-                            Engine.Installer.Install(new Engine.Installer.Options { StartMenu = Array.IndexOf(args, "--no-startmenu") < 0, Desktop = Array.IndexOf(args, "--no-desktop") < 0 });
+                            var opt = Array.IndexOf(args, "--keep-shortcuts") >= 0 && Engine.Installer.IsInstalled ? Engine.Installer.Options.Current()
+                                : new Engine.Installer.Options { StartMenu = Array.IndexOf(args, "--no-startmenu") < 0, Desktop = Array.IndexOf(args, "--no-desktop") < 0 };
+                            Engine.Installer.Install(opt);
                             if (Array.IndexOf(args, "--no-start") < 0) StartInstalled();
                             return 0;
                         }
@@ -85,6 +91,13 @@ namespace CleanSweep
                         }
             }
 
+            if (testOut == null)
+            {
+                Engine.Updater.CleanDownloads();
+                // keep the automatic cleanup's own copy in step with this version after an update
+                try { var st = Engine.AutoClean.State(); if (st.Exists && !st.RunsPowerShellEdition && Engine.Installer.RunningInstalled) Engine.AutoClean.InstallRunner(); } catch { }
+            }
+
             using (var single = new Mutex(true, testOut == null ? "CleanSweep.CSharp.Window" : "CleanSweep.CSharp.Test", out bool first))
             {
                 if (!first) { Msg.Show("CleanSweep is already open."); return 0; }
@@ -98,7 +111,11 @@ namespace CleanSweep
                     else { Form.Page<DrivesPage>()?.Stop.PerformClick(); Form.Page<RepairPage>()?.Stop.PerformClick(); }
                 };
                 // First health check runs automatically when the window opens (read-only)
-                if (testOut == null) Form.Shown += async (s, e) => await dash.RunCheckAsync();
+                if (testOut == null) Form.Shown += async (s, e) =>
+                {
+                    if (Engine.Updater.Due) _ = System.Threading.Tasks.Task.Run(() => { try { Engine.Updater.Check(); } catch (Exception x) { Trace.Write("Update check failed: " + x.Message); } });
+                    await dash.RunCheckAsync();
+                };
 
                 if (testOut != null) return SelfTest.Run(Form, testOut);
                 Application.Run(Form);

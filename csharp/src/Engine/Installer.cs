@@ -55,7 +55,17 @@ namespace CleanSweep.Engine
         /// <summary>The copy being run is newer than the installed one (or nothing is installed).</summary>
         public static bool Newer { get { var iv = InstalledVersion; return iv == null || MyVersion > iv; } }
 
-        public class Options { public bool StartMenu = true, Desktop = true; }
+        public class Options
+        {
+            public bool StartMenu = true, Desktop = true;
+            /// <summary>Updates keep the shortcuts the user has now (a removed Desktop shortcut stays removed).</summary>
+            public static Options Current()
+            {
+                bool s = IsOurs(StartMenuLink), d = IsOurs(DesktopLink);
+                return new Options { StartMenu = s || !d, Desktop = d };
+            }
+        }
+        static bool IsOurs(string lnk) => File.Exists(lnk) && string.Equals(Shortcuts.Target(lnk), Exe, StringComparison.OrdinalIgnoreCase);
 
         // ------------------------------------------------------------------ install / update
         /// <summary>Installs or updates. <paramref name="closeRunning"/> is asked before a running installed copy is closed.</summary>

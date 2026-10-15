@@ -976,6 +976,99 @@ namespace CleanSweep
             try { Directory.Delete(sbx, true); } catch { }
             about.UpdateInstallInfo();
 
+            // ---------------------------------------------------------------- updates (local update files; the sandbox install from above)
+            string updDir = Path.Combine(CleanEngine.MyTemp, "CleanSweepUpdateTest");
+            string nextExe = Path.Combine(Path.GetDirectoryName(Installer.Source), "CleanSweep-next.exe");
+            string realUpdUrl = Settings.GetString("CsUpdateUrl", null);
+            void Manifest(Version v, string exe, string sha = null, string url = null)
+            {
+                Directory.CreateDirectory(updDir);
+                string m = Path.Combine(updDir, "csharp.json");
+                File.WriteAllText(m, new System.Web.Script.Serialization.JavaScriptSerializer().Serialize(new Dictionary<string, object>
+                    { ["version"] = v.ToString(), ["url"] = url ?? new Uri(exe).AbsoluteUri, ["sha256"] = sha ?? Updater.Sha256(exe), ["notes"] = "Self-test update.", ["size"] = new FileInfo(exe).Length }));
+                Settings.Set("CsUpdateUrl", new Uri(m).AbsoluteUri);
+            }
+            var cur = Updater.Current; var plusOne = new Version(cur.Major, cur.Minor, cur.Build, cur.Revision + 1);
+            await Step("Updates: up to date, then a newer build is found", async () =>
+            {
+                Reset(updDir); form.ShowPage(about); Pump(100);
+                Manifest(cur, Installer.Source);
+                await about.CheckNowAsync(true); Note("    same build: " + about.UpdStatus.Text);
+                Check(Updater.Available == null && about.UpdStatus.Text.StartsWith("You have the latest"), "should be up to date");
+                Check(!form.UpdateNotice.Visible && !about.InstallUpd.Visible, "no update should be offered");
+                Manifest(plusOne, Installer.Source);
+                await about.CheckNowAsync(true); Pump(200); Note("    newer build: " + about.UpdStatus.Text + " | sidebar: " + form.UpdateNotice.Text.Replace("\n", " / "));
+                Check(Updater.Available != null && Updater.Available.Version == plusOne, "newer build not found");
+                Check(form.UpdateNotice.Visible && about.InstallUpd.Visible && about.UpdNotes.Text.Contains("Self-test update"), "update not shown");
+                Shot("updates");
+                about.SkipUpd.PerformClick(); Pump(100);
+                Check(Updater.Available == null && !form.UpdateNotice.Visible, "Skip this version did not hide it");
+                Updater.Check(); Check(Updater.Available == null, "skipped build offered again by the daily check");
+                await about.CheckNowAsync(true);
+                Check(Updater.Available != null, "Check now should show a skipped build again");
+            });
+            await Step("Updates: a download is only run if it passes every check", async () =>
+            {
+                string handed = null; about.TestHandOver = f => handed = f;
+                // 1. right file, wrong fingerprint
+                Manifest(plusOne, Installer.Source, sha: new string('0', 64)); await about.CheckNowAsync(true);
+                await about.InstallUpdateAsync(); Note("    wrong fingerprint: " + about.UpdStatus.Text);
+                Check(handed == null && about.UpdStatus.Text.Contains("fingerprint"), "bad fingerprint not rejected");
+                // 2. fingerprint fine but the exe is not the build the update file promised
+                Manifest(plusOne, Installer.Source); await about.CheckNowAsync(true);
+                await about.InstallUpdateAsync(); Note("    wrong build: " + about.UpdStatus.Text);
+                Check(handed == null && about.UpdStatus.Text.Contains("was expected"), "wrong build not rejected");
+                // 3. plain http is refused
+                bool refused = false;
+                try { Updater.Download(new UpdateInfo { Version = plusOne, Url = "http://example.com/CleanSweep.exe", Sha256 = new string('0', 64) }, null, default); }
+                catch (Exception e) { refused = e.Message.Contains("HTTPS"); Note("    http: " + e.Message); }
+                Check(refused, "http download not refused");
+                Check(!Directory.Exists(Updater.DownloadDir) || Directory.GetFiles(Updater.DownloadDir, "CleanSweep-" + plusOne + ".exe").Length == 0, "rejected download left behind");
+                about.TestHandOver = null;
+            });
+            if (File.Exists(nextExe))
+                await Step("Updates: install a newer build over the installed copy (sandbox)", async () =>
+                {
+                    Installer.UseSandbox(sbx); Reset(sbx); Directory.CreateDirectory(Installer.DataDir);
+                    Installer.Install(new Installer.Options { Desktop = false });
+                    var next = Installer.VersionOf(nextExe); Note($"    installed build {Installer.InstalledVersion.Revision}, offering build {next.Revision}");
+                    Manifest(next, nextExe); await about.CheckNowAsync(true);
+                    Check(Updater.Available != null && Updater.Available.Version == next, "next build not offered");
+                    string handed = null; about.TestHandOver = f => handed = f;
+                    await about.InstallUpdateAsync(); about.TestHandOver = null;
+                    Note("    downloaded and checked: " + handed);
+                    Check(handed != null && Updater.Verify(handed, Updater.Available) == null, "download not verified");
+                    // the open "old" CleanSweep: the installed copy, which closes a few seconds later like the real window would
+                    var old = StartInstalled("--ping \"" + Path.Combine(sbx, "old.txt") + "\" --wait 4");
+                    var sw = Stopwatch.StartNew();
+                    using (var p = Process.Start(new ProcessStartInfo(handed, $"--install --quiet --keep-shortcuts --wait-pid {old.Id} --no-start --sandbox \"{sbx}\"") { UseShellExecute = false, WorkingDirectory = Path.GetTempPath() }))
+                    {
+                        p.WaitForExit(90000); Note($"    update finished in {sw.Elapsed.TotalSeconds:0.0}s (waited for the old window), exit code {p.ExitCode}");
+                    }
+                    old.Dispose();
+                    Check(Installer.InstalledVersion == next, "installed copy is still build " + Installer.InstalledVersion?.Revision);
+                    Check(File.Exists(Installer.StartMenuLink) && !File.Exists(Installer.DesktopLink), "shortcut choices not kept (Desktop shortcut should stay off)");
+                    Check((string)Installer.UninstallEntry()?["DisplayVersion"] == next.ToString(), "Settings > Apps still shows the old version");
+                    var r = Ping(); Note("    installed copy now says: " + (r ?? "nothing").Replace("\r\n", "  "));
+                    Check(r != null && r.StartsWith(next.ToString()), "updated copy does not start");
+                    Installer.Uninstall(true);
+                    var sw2 = Stopwatch.StartNew(); while (Directory.Exists(Installer.Dir) && sw2.ElapsedMilliseconds < 10000) Pump(250);
+                    (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey) = real; Installer.TouchSchedule = true;
+                    try { Directory.Delete(sbx, true); } catch { }
+                });
+            else Note("(CleanSweep-next.exe not found next to the test - skipping the full update install)");
+            (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey) = real; Installer.TouchSchedule = true;
+            if (realUpdUrl == null) Settings.Remove("CsUpdateUrl"); else Settings.Set("CsUpdateUrl", realUpdUrl);
+            Settings.Remove("CsSkipVersion");
+            await Step("Updates: the real update file on GitHub (read-only)", () =>
+            {
+                try { var u = Updater.Check(); Note($"    {Updater.ManifestUrl}: {(u != null ? "build " + u.Version.Revision + " available" : "this build is current or newer")}"); }
+                catch (Exception e) { Note("    not reachable or not published yet: " + e.Message); }
+                Updater.Reset(); about.ShowUpdate();
+            });
+            try { Directory.Delete(updDir, true); } catch { }
+            Updater.CleanDownloads();
+
             await Step("Messages asked during the test", () => { foreach (var m in Msg.Log) Note("  " + m); foreach (var o in Shell.TestOpened) Note("  [would open] " + o); });
             form.ShowPage(cl); Shot("cleanup-final");
             form.ShowPage(dash); Pump(300); Shot("dashboard-final"); SetSize(new Size(960, 640)); Pump(300); dash.ScrollToTop(); Shot("dashboard-960"); SetSize(new Size(1024, 720));

@@ -37,3 +37,7 @@ What the test does on your PC:
 - Installer: installs CleanSweep into a test folder in your Temp folder, starts it, updates
   it and uninstalls it again. Your real Start menu, Desktop and Settings > Apps are not
   changed. (To really install CleanSweep, just double-click CleanSweep-CSharp-preview.exe.)
+- Updates: checks small test update files, makes sure bad downloads (wrong fingerprint,
+  wrong build, plain http) are refused, then installs CleanSweep-next.exe over a test copy
+  in Temp. Your real Start menu, Settings > Apps and installed CleanSweep are not changed.
+  It only reads the real update file on GitHub, it never installs from it.

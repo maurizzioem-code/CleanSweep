@@ -28,24 +28,32 @@ A build is only published after every self-test step has passed.
 Available to individual developers in the USA and Canada. The publisher name on the certificate is your
 legal name, and your city, province and country are shown in it too.
 
-1. **Azure account:** sign up at portal.azure.com with a pay-as-you-go subscription. The billing account type must be
-   **Individual**, with your legal name and address exactly as on your ID.
-2. **Artifact Signing account:** in the portal search for *Artifact Signing Accounts* > Create. Choose a region
-   (for example East US), the Basic tier, and a name such as `cleansweep`. Note its endpoint (East US is
-   `https://eus.codesigning.azure.net/`).
-3. **Roles:** on the account's Access control (IAM), give yourself **Artifact Signing Identity Verifier**.
-4. **Identity validation:** Identity validations > Individual > New identity > Public. Finish the ID check
-   (photo ID on your phone through Microsoft's partner and the Microsoft Authenticator app). It can take 1-20 business days.
-5. **Certificate profile:** Certificate profiles > Create > Public Trust, name it e.g. `cleansweep-public`, and pick
-   the validated identity.
-6. **Let the GitHub build sign:**
-   - Microsoft Entra ID > App registrations > New registration `CleanSweep GitHub signing`.
-   - On that app: Certificates & secrets > Federated credentials > Add > *GitHub Actions deploying Azure resources*:
-     organization `maurizzioem-code`, repository `CleanSweep`, entity *Branch*, branch `main`.
-   - On the Artifact Signing account's Access control (IAM): give the app the **Artifact Signing Certificate Profile Signer** role.
-7. **GitHub settings** (repository > Settings > Secrets and variables > Actions):
-   - Secrets: `AZURE_CLIENT_ID` (the app's client ID), `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`.
+1. **Azure account:** sign up at portal.azure.com with a **pay-as-you-go** subscription. The billing account type
+   must be **Individual**, with your legal name and address exactly as on your photo ID (check it under
+   Cost Management + Billing > Properties before step 3; the name and city go on the certificate).
+2. **Run the setup script** in Azure Cloud Shell (the `>_` button at the top of the portal, choose Bash):
+
+   ```
+   curl -sL https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/docs/azure-signing-setup.sh | bash
+   ```
+
+   It registers the `Microsoft.CodeSigning` resource provider, creates the resource group `cleansweep-signing` and the
+   Basic Artifact Signing account `cleansweep` in East US (endpoint `https://eus.codesigning.azure.net/`), gives you the
+   **Artifact Signing Identity Verifier** role, and creates the app `CleanSweep GitHub signing` with a federated
+   credential for this repository's `main` branch and the **Artifact Signing Certificate Profile Signer** role.
+   It prints six lines (IDs, not passwords) for the GitHub settings in step 5.
+   If the name `cleansweep` is taken, edit `ACCOUNT=` at the top of the script and run it again.
+3. **Identity validation** (portal only): the `cleansweep` account > Identity validations > choose **Individual** >
+   New identity > **Public** > check the details > Create. When the status is **Action Required**, click your name and
+   the verification link, sign in with the same email, and do the ID check on your phone (AU10TIX, then add the
+   Verified ID to the Microsoft Authenticator app and share it). Microsoft says public identity validation can take
+   1-20 business days.
+4. **Certificate profile:** when the validation says **Completed**: Certificate profiles > Create > **Public Trust**,
+   name `CleanSweepPublic`, Program Type None, Verified CN and O = your validation. Leave street address and postal code off.
+5. **GitHub settings** (repository > Settings > Secrets and variables > Actions):
+   - Secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`.
    - Variables: `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE`.
+   Set these last: as soon as `AZURE_SIGNING_ACCOUNT` exists, every build must be validly signed or it fails.
 
 The next build signs both test builds, checks the signatures and runs every test on the signed program.
 No password is stored: GitHub signs in to Azure for each build with a short-lived token (OpenID Connect).

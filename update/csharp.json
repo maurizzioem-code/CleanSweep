@@ -1,7 +1,7 @@
 {
-  "version": "5.0.0.29",
-  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/csharp/CleanSweep-5.0.0.29.exe",
-  "sha256": "A883F08DC3D7E7E76F83B31244DDA6A9561A7FA89517C84E97ECC26A1B5124B4",
-  "size": 627200,
-  "notes": "First C# build with automatic updates."
+  "version": "5.0.0.32",
+  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/csharp/CleanSweep-5.0.0.32.exe",
+  "sha256": "765E20C30250914AEA3A8290502FA5101813E76A3A32A0FFBDC7F41C470FFB99",
+  "size": 658432,
+  "notes": "Retire the PowerShell edition from Settings or the install window: its automatic cleanup schedule moves to this version (same days, time and conditions) and its files are kept as a backup you can put back. Updates are now checked for a matching digital signature once CleanSweep is signed."
 }

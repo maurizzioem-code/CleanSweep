@@ -887,7 +887,7 @@ namespace CleanSweep
             var about = form.Page<AboutPage>();
             string sbx = Path.Combine(CleanEngine.MyTemp, "CleanSweepInstallTest");
             var real = (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey);
-            Installer.UseSandbox(sbx);
+            Installer.UseSandbox(sbx); about.UpdateInstallInfo(); about.UpdatePs();
             string psLauncher = Path.Combine(Installer.DataDir, "CleanSweep.exe");
             Process StartInstalled(string args) => Process.Start(new ProcessStartInfo(Installer.Exe, args) { UseShellExecute = false, WorkingDirectory = Installer.Dir });
             string Ping(int waitSec = 0)
@@ -903,7 +903,7 @@ namespace CleanSweep
                 File.WriteAllText(Path.Combine(Installer.DataDir, "CleanSweep.ps1"), "# stand-in for the PowerShell edition");
                 File.WriteAllText(psLauncher, "stand-in"); File.WriteAllText(Path.Combine(Installer.DataDir, "settings.json"), "{}");
                 Installer.MakeLink(Installer.StartMenuLink, psLauncher, Installer.DataDir, "CleanSweep (PowerShell edition)");
-                form.ShowPage(about); Pump(100);
+                form.ShowPage(about); about.UpdateInstallInfo(); about.UpdatePs(); Pump(100);
                 Check(about.InstallBtn.Text == "Install..." && !about.UninstallBtn.Enabled, "Settings should offer Install when not installed: " + about.InstallInfo.Text);
                 about.ShowInstall(); var f = about.OpenInstall; Pump(300);
                 Shot("installer", f);
@@ -975,13 +975,13 @@ namespace CleanSweep
             });
             foreach (var p in Installer.RunningCopies()) try { p.Kill(); } catch { }
             try { Registry.CurrentUser.DeleteSubKeyTree(Installer.UninstallKey, false); } catch { }
-            (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey) = real; Installer.TouchSchedule = true;
+            (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey) = real; Installer.TouchSchedule = true; about.UpdateInstallInfo(); about.UpdatePs();
             try { Directory.Delete(sbx, true); } catch { }
             about.UpdateInstallInfo();
 
             // ---------------------------------------------------------------- retire the PowerShell edition (sandbox + a separate test task; the real schedule is never touched)
             {
-                Installer.UseSandbox(sbx); Installer.TouchSchedule = true;
+                Installer.UseSandbox(sbx); Installer.TouchSchedule = true; about.UpdateInstallInfo(); about.UpdatePs();
                 string realTask = AutoClean.TaskName; AutoClean.TaskName = "Automatic cleanup (self-test retire)";
                 string data = Installer.DataDir, ps1 = Path.Combine(data, "CleanSweep.ps1"), vbs = Path.Combine(data, "CleanSweep.vbs");
                 string before = null; bool enabledBefore = false; Process psWin = null;
@@ -1058,7 +1058,7 @@ namespace CleanSweep
                 foreach (var p in Installer.RunningCopies()) try { p.Kill(); } catch { }
                 try { Installer.Uninstall(true); } catch { }
                 try { Registry.CurrentUser.DeleteSubKeyTree(Installer.UninstallKey, false); } catch { }
-                (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey) = real; Installer.TouchSchedule = true;
+                (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey) = real; Installer.TouchSchedule = true; about.UpdateInstallInfo(); about.UpdatePs();
                 try { Directory.Delete(sbx, true); } catch { }
                 about.UpdatePs(); about.UpdateInstallInfo();
             }
@@ -1127,7 +1127,7 @@ namespace CleanSweep
             if (File.Exists(nextExe))
                 await Step("Updates: install a newer build over the installed copy (sandbox)", async () =>
                 {
-                    Installer.UseSandbox(sbx); Reset(sbx); Directory.CreateDirectory(Installer.DataDir);
+                    Installer.UseSandbox(sbx); Reset(sbx); Directory.CreateDirectory(Installer.DataDir); about.UpdateInstallInfo(); about.UpdatePs();
                     Installer.Install(new Installer.Options { Desktop = false });
                     var next = Installer.VersionOf(nextExe); Note($"    installed build {Installer.InstalledVersion.Revision}, offering build {next.Revision}");
                     Manifest(next, nextExe); await about.CheckNowAsync(true);
@@ -1151,11 +1151,11 @@ namespace CleanSweep
                     Check(r != null && r.StartsWith(next.ToString()), "updated copy does not start");
                     Installer.Uninstall(true);
                     var sw2 = Stopwatch.StartNew(); while (Directory.Exists(Installer.Dir) && sw2.ElapsedMilliseconds < 10000) Pump(250);
-                    (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey) = real; Installer.TouchSchedule = true;
+                    (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey) = real; Installer.TouchSchedule = true; about.UpdateInstallInfo(); about.UpdatePs();
                     try { Directory.Delete(sbx, true); } catch { }
                 });
             else Note("(CleanSweep-next.exe not found next to the test - skipping the full update install)");
-            (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey) = real; Installer.TouchSchedule = true;
+            (Installer.Dir, Installer.StartMenuDir, Installer.DesktopDir, Installer.DataDir, Installer.UninstallKey) = real; Installer.TouchSchedule = true; about.UpdateInstallInfo(); about.UpdatePs();
             if (realUpdUrl == null) Settings.Remove("CsUpdateUrl"); else Settings.Set("CsUpdateUrl", realUpdUrl);
             Settings.Remove("CsSkipVersion");
             await Step("Updates: the real update file on GitHub (read-only)", () =>

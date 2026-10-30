@@ -110,7 +110,14 @@ jobs:
         run: |
           $kit = Join-Path $PWD "laptop-kit"; New-Item -ItemType Directory $kit -Force | Out-Null
           Copy-Item csharp\laptop-test\* $kit; Copy-Item csharp\bin\Release\CleanSweep.exe (Join-Path $kit "CleanSweep-CSharp-preview.exe"); Copy-Item csharp\bin\Release\CleanSweep-next.exe $kit
+          # like the user's laptop: a real installed copy is already there while the kit runs
+          $inst = Join-Path $env:LOCALAPPDATA "Programs\CleanSweep\CleanSweep.exe"
+          $pi = Start-Process csharp\bin\Release\CleanSweep.exe -ArgumentList "--install", "--quiet" -PassThru; [void]$pi.WaitForExit(120000)
+          Start-Sleep 3; Get-Process CleanSweep -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $inst } | Stop-Process -Force
+          "installed before the kit: $(Test-Path $inst)"
           powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kit "run-test.ps1")
+          if (Test-Path $inst) { $un = Start-Process $inst -ArgumentList "--uninstall", "--quiet", "--remove-data" -PassThru; [void]$un.WaitForExit(60000); Start-Sleep 5 }
+          "installed after cleanup: $(Test-Path $inst)"
           $zip = Join-Path ([Environment]::GetFolderPath('Desktop')) 'CleanSweep test results.zip'
           if (-not (Test-Path $zip)) { "results zip missing"; exit 1 }
           Copy-Item $zip $PWD; Get-Content (Join-Path ([Environment]::GetFolderPath('Desktop')) 'CleanSweep test results\pc.txt')

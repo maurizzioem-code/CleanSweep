@@ -1,6 +1,6 @@
 {
-  "version": "4.3",
-  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-4.3.zip",
-  "sha256": "77D381A55988AD2E0ED341779DBB2664B0701A8F7BDE490BBC60284F932BBF57",
-  "notes": "Cleanup page: Junk Files and Temp Files merged into one page with one cleaning engine (same age, ignore and in-use rules everywhere, links never followed). Registry cleaner is now an advanced option, off by default (Settings). Prefetch cleaning removed. Recycle Bin is off by default and only empties items deleted more than 30 days ago (adjustable)."
+  "version": "5.0",
+  "url": "https://raw.githubusercontent.com/maurizzioem-code/CleanSweep/main/releases/CleanSweep-5.0.zip",
+  "sha256": "7D74DFCA8DA6B0A5A11C588222D05BBCC19DC6981F1E155A4EC8224F1ABE7EA5",
+  "notes": "CleanSweep 5.0 replaces this PowerShell edition with the new native Windows version: faster, and it stays responsive while it works. Your settings, history and automatic cleanup schedule (same days and time) are kept. The PowerShell edition's files are kept as a backup you can put back from Settings. This is the last update for the PowerShell edition."
 }

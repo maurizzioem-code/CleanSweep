@@ -25,9 +25,10 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Silen
 Start-Sleep -Seconds 1
 
 try {
-  $p = Start-Process -FilePath $exe -ArgumentList "--install", "--quiet", "--retire-powershell" -PassThru -Wait -ErrorAction Stop
-  Log "Installer exit code: $($p.ExitCode)"
-  $ok = $p.ExitCode -eq 0
+  # not -Wait: that also waits for the new CleanSweep window the installer opens at the end
+  $p = Start-Process -FilePath $exe -ArgumentList "--install", "--quiet", "--retire-powershell" -PassThru -ErrorAction Stop
+  if ($p.WaitForExit(300000)) { Log "Installer exit code: $($p.ExitCode)"; $ok = $p.ExitCode -eq 0 }
+  else { Log "The installer did not finish within 5 minutes."; $ok = $false }
 } catch { Log "Could not start the new CleanSweep: $_"; $ok = $false }
 
 $installed = Join-Path $env:LOCALAPPDATA "Programs\CleanSweep\CleanSweep.exe"

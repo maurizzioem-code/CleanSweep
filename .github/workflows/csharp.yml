@@ -145,8 +145,8 @@ jobs:
           $bad = 0; $data = Join-Path $env:LOCALAPPDATA "CleanSweep"; $wsh = New-Object -ComObject WScript.Shell
           # 1. install the real PowerShell edition 4.3 from its published package; it opens its window
           $ps = Join-Path $env:RUNNER_TEMP "ps43"; Expand-Archive releases\CleanSweep-4.3.zip $ps -Force
-          powershell -NoProfile -ExecutionPolicy Bypass -File "$ps\CleanSweep\Install.ps1" -Quiet
-          Start-Sleep -Seconds 8
+          $pi = Start-Process powershell -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$ps\CleanSweep\Install.ps1`"", "-Quiet" -PassThru -WindowStyle Hidden
+          [void]$pi.WaitForExit(120000); Start-Sleep -Seconds 8
           $psWin = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like "*CleanSweep.ps1*" })
           "PowerShell edition $((Select-String "$data\CleanSweep.ps1" -Pattern '^\$Version = "(.+)"').Matches.Groups[1].Value) installed, windows open: $($psWin.Count)"
           # 2. its automatic cleanup, made the way its Schedule.ps1 makes it
@@ -161,8 +161,10 @@ jobs:
           $pkg = Join-Path $env:RUNNER_TEMP "bridge\CleanSweep"; New-Item -ItemType Directory $pkg -Force | Out-Null
           Copy-Item csharp\bin\Release\CleanSweep.exe, csharp\bridge\Install.ps1 $pkg
           $sw = [Diagnostics.Stopwatch]::StartNew()
-          powershell -NoProfile -ExecutionPolicy Bypass -File "$pkg\Install.ps1" -Quiet
-          "update package finished in $([int]$sw.Elapsed.TotalSeconds)s"; Get-Content "$data\logs\move-to-5.0.log" | ForEach-Object { "  log: $_" }
+          $up = Start-Process powershell -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$pkg\Install.ps1`"", "-Quiet" -PassThru -WindowStyle Hidden
+          if (-not $up.WaitForExit(240000)) { "update package did not finish in 4 minutes"; $bad++ }
+          "update package finished in $([int]$sw.Elapsed.TotalSeconds)s"; Get-Content "$data\logs\move-to-5.0.log" -ErrorAction SilentlyContinue | ForEach-Object { "  log: $_" }
+          Get-ChildItem "$data\logs" -Filter *.log -ErrorAction SilentlyContinue | Where-Object Name -ne "move-to-5.0.log" | ForEach-Object { "  --- $($_.Name) (last lines)"; Get-Content $_.FullName -Tail 15 | ForEach-Object { "  $_" } }
           Start-Sleep -Seconds 3
           # 4. results
           $inst = Join-Path $env:LOCALAPPDATA "Programs\CleanSweep\CleanSweep.exe"
@@ -184,7 +186,7 @@ jobs:
           "scheduled runs recorded: $n0 -> $n1  (last result 0x$('{0:X}' -f (Get-ScheduledTaskInfo $after).LastTaskResult))"; if ($n1 -le $n0) { $bad++ }
           # 6. tidy up the test machine
           $new | Stop-Process -Force -ErrorAction SilentlyContinue
-          Start-Process $inst -ArgumentList "--uninstall", "--quiet", "--remove-data" -Wait
+          if (Test-Path $inst) { $un = Start-Process $inst -ArgumentList "--uninstall", "--quiet", "--remove-data" -PassThru; [void]$un.WaitForExit(60000) }
           Unregister-ScheduledTask -TaskPath "\CleanSweep\" -TaskName "Automatic cleanup" -Confirm:$false -ErrorAction SilentlyContinue
           "problems: $bad"; if ($bad) { exit 1 }
       - uses: actions/upload-artifact@v4

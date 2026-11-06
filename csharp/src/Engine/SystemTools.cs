@@ -274,6 +274,7 @@ namespace CleanSweep.Engine
                     if (Has("restore operation completed successfully")) return new Verdict("Repaired", "Windows image is healthy (repaired if needed) - now run System File Checker");
                     return new Verdict("OK", "Completed successfully");
                 }
+                if (hex == "0x800F0915") return new Verdict("Problem", $"Couldn't get repair files ({hex}) - not a sign of damage; run Scan Windows image to check");
                 if (hex == "0x800F081F" || hex == "0x800F0906") return new Verdict("Problem", $"Repair files could not be downloaded ({hex}) - check your internet connection and Windows Update, then try again");
                 if (hex == "0x800F0954") return new Verdict("Problem", $"Blocked by a Windows Update policy ({hex}) - common on work-managed PCs");
                 if (hex == "0x800F0806" || r.Code == 3010) return new Verdict("Problem", "Another update or repair is pending - restart and try again");

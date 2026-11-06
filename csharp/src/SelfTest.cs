@@ -675,6 +675,7 @@ namespace CleanSweep
                     ("dism-scan", R(0, "The component store is repairable."), "Damage found"),
                     ("dism-restore", R(0, "The restore operation completed successfully."), "Windows image is healthy"),
                     ("dism-restore", R(unchecked((int)0x800F081F), "Error: 0x800f081f"), "could not be downloaded (0x800F081F)"),
+                    ("dism-restore", R(unchecked((int)0x800F0915), "Error: 0x800f0915\r\nThe repair content could not be found anywhere."), "not a sign of damage"),
                     ("dism-restore", R(unchecked((int)0x800F0954), "Error: 0x800f0954"), "Windows Update policy"),
                     ("dism-check", new ToolResult { Cancelled = true }, "Cancelled"),
                 };
